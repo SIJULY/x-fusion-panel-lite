@@ -1,0 +1,25 @@
+.DS_Store
+.venv/
+.idea/
+.nicegui/
+.run_logs/
+.runlogs/
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+*.sqlite3
+
+# Runtime data / local state
+data/*
+!data/.gitkeep
+
+# Local-only directories
+Users/
+.claude/
+push-to-lite.sh
+
+# Docker / compose local artifacts
+.caddy/
