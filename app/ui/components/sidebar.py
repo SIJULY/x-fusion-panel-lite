@@ -21,9 +21,7 @@ from app.ui.dialogs.batch_ssh import BatchSSH
 from app.ui.dialogs.bulk_edit import open_bulk_edit_dialog
 from app.ui.dialogs.group_dialogs import (
     open_combined_group_management,
-    open_group_sort_dialog,
     open_quick_group_create_dialog,
-    open_unified_group_manager,
 )
 from app.utils.formatters import smart_sort_key
 from app.utils.geo import detect_country_group
@@ -492,12 +490,6 @@ def render_sidebar_content():
 
     with ui.column().classes(theme['bottom_wrap']).style(
             'border-color: var(--xf-card-border); background: var(--xf-bg-main);'):
-        ui.button('分组管理', icon='settings', on_click=lambda: open_unified_group_manager('manage')).props(
-            'flat align=left').classes(theme['bottom_btn']).style(
-            'background: var(--xf-elevated-bg); border-color: var(--xf-card-border); color: var(--xf-text-strong);')
-        ui.button('排序视图', icon='sort', on_click=open_group_sort_dialog).props(
-            'flat align=left').classes(theme['bottom_btn']).style(
-            'background: var(--xf-elevated-bg); border-color: var(--xf-card-border); color: var(--xf-text-strong);')
         ui.button('批量 SSH 执行', icon='playlist_play', on_click=batch_ssh_manager.open_dialog).props(
             'flat align=left').classes(theme['bottom_btn']).style(
             'background: var(--xf-elevated-bg); border-color: var(--xf-card-border); color: var(--xf-text-strong);')
