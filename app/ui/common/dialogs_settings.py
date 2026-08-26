@@ -187,6 +187,11 @@ def open_probe_settings_dialog():
 
         with ui.scroll_area().classes(theme['scroll']):
             with ui.column().classes('w-full gap-6'):
+                with ui.column().classes('w-full'):
+                    probe_switch = ui.switch('启用探针功能', value=bool(ADMIN_CONFIG.get('probe_enabled', True))).classes(
+                        'text-sm font-black text-slate-200' if theme['is_dark'] else 'text-sm font-black text-slate-800')
+                    ui.label('关闭后不再自动安装探针，也不接收 Agent 推送数据').classes('text-xs text-slate-500')
+
                 with ui.column().classes('w-full bg-cyan-950/15 p-4 rounded-sm border border-cyan-500/25' if theme['is_dark'] else 'w-full bg-sky-50 p-4 rounded-sm border border-sky-200'):
                     ui.label('📡 主控端外部地址 (Agent连接地址)').classes('text-sm font-black text-cyan-300' if theme['is_dark'] else 'text-sm font-black text-sky-700')
                     ui.label('Agent 将向此地址推送数据。请填写 http://公网IP:端口 或 https://域名').classes('text-xs text-cyan-500/80 mb-2' if theme['is_dark'] else 'text-xs text-sky-700/80 mb-2')
@@ -206,6 +211,7 @@ def open_probe_settings_dialog():
             if url_val:
                 ADMIN_CONFIG['manager_base_url'] = url_val
 
+            ADMIN_CONFIG['probe_enabled'] = bool(probe_switch.value)
             ADMIN_CONFIG['tg_bot_token'] = tg_token.value.strip()
             ADMIN_CONFIG['tg_chat_id'] = tg_id.value.strip()
 

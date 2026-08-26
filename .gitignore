@@ -20,6 +20,7 @@ data/*
 Users/
 .claude/
 push-to-lite.sh
+finish-step3.sh
 
 # Docker / compose local artifacts
 .caddy/

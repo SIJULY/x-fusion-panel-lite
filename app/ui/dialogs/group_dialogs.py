@@ -191,9 +191,9 @@ def open_group_sort_dialog():
             safe_notify("✅ 分组顺序已更新", "positive")
             d.close()
             try:
-                from app.ui.pages.probe_page import render_probe_page
+                from app.ui.components.sidebar import render_sidebar_content
 
-                await render_probe_page()
+                render_sidebar_content.refresh()
             except:
                 pass
 
@@ -509,9 +509,9 @@ def open_unified_group_manager(mode='manage'):
         safe_notify(f"✅ 保存成功", "positive")
         load_group_data(new_name)
         try:
-            from app.ui.pages.probe_page import render_probe_page
+            from app.ui.components.sidebar import render_sidebar_content
 
-            await render_probe_page()
+            render_sidebar_content.refresh()
         except:
             pass
 
@@ -529,9 +529,9 @@ def open_unified_group_manager(mode='manage'):
         safe_notify("🗑️ 已删除", "positive")
         load_group_data(None)
         try:
-            from app.ui.pages.probe_page import render_probe_page
+            from app.ui.components.sidebar import render_sidebar_content
 
-            await render_probe_page()
+            render_sidebar_content.refresh()
         except:
             pass
 

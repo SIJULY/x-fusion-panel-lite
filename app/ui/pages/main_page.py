@@ -630,9 +630,6 @@ def main_page(request: Request):
             from app.ui.components.dashboard import refresh_dashboard_ui
             await refresh_dashboard_ui()
             await ui.run_javascript('setTimeout(() => { window.applyDashboardTheme && window.applyDashboardTheme(); }, 80)')
-        elif current_scope == 'PROBE':
-            from app.ui.pages.probe_page import render_probe_page
-            await render_probe_page()
         elif current_scope == 'SUBS':
             from app.ui.pages.subs_page import load_subs_view
             await load_subs_view()
@@ -721,7 +718,6 @@ def main_page(request: Request):
     async def restore_last_view():
         from app.ui.components.dashboard import load_dashboard_stats
         from app.ui.pages.content_router import refresh_content
-        from app.ui.pages.probe_page import render_probe_page
         from app.ui.pages.subs_page import load_subs_view
 
         logger.info(f"[MainPage] restore_last_view start | stored_scope={app.storage.user.get('last_view_scope', 'DASHBOARD')} stored_data={app.storage.user.get('last_view_data', None)} content_container_id={id(content_router.content_container) if content_router.content_container else None}")
@@ -729,6 +725,10 @@ def main_page(request: Request):
         last_scope = app.storage.user.get('last_view_scope', 'DASHBOARD')
         last_data_id = app.storage.user.get('last_view_data', None)
         last_page = app.storage.user.get('last_view_page', 1)
+        if last_scope == 'PROBE':
+            last_scope = 'DASHBOARD'
+            app.storage.user['last_view_scope'] = 'DASHBOARD'
+            app.storage.user['last_view_data'] = None
         target_data = last_data_id
         if last_scope in ['SINGLE', 'SSH_SINGLE'] and last_data_id:
             target_data = next((s for s in SERVERS_CACHE if s['url'] == last_data_id), None)
@@ -738,9 +738,6 @@ def main_page(request: Request):
         if last_scope == 'DASHBOARD':
             logger.info("[MainPage] restore_last_view branch=DASHBOARD")
             await load_dashboard_stats()
-        elif last_scope == 'PROBE' and ADMIN_CONFIG.get('probe_enabled', True):
-            logger.info("[MainPage] restore_last_view branch=PROBE")
-            await render_probe_page()
         elif last_scope == 'SUBS':
             logger.info("[MainPage] restore_last_view branch=SUBS")
             await load_subs_view()

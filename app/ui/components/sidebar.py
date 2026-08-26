@@ -16,12 +16,14 @@ from app.core.state import (
 )
 from app.storage.repositories import save_admin_config
 from app.ui.common.dialogs_data import open_data_mgmt_dialog, open_global_settings_dialog
-from app.ui.common.dialogs_settings import open_cloudflare_settings_dialog
+from app.ui.common.dialogs_settings import open_cloudflare_settings_dialog, open_probe_settings_dialog
 from app.ui.dialogs.batch_ssh import BatchSSH
 from app.ui.dialogs.bulk_edit import open_bulk_edit_dialog
 from app.ui.dialogs.group_dialogs import (
     open_combined_group_management,
+    open_group_sort_dialog,
     open_quick_group_create_dialog,
+    open_unified_group_manager,
 )
 from app.utils.formatters import smart_sort_key
 from app.utils.geo import detect_country_group
@@ -178,11 +180,6 @@ def render_sidebar_content():
 
         with ui.column().classes('w-full gap-2 z-10 relative'):
             ui.button('仪表盘', icon='dashboard', on_click=lambda: asyncio.create_task(_load_dashboard())).props(
-                'flat align=left').classes(theme['top_btn']).style(
-                'background: var(--xf-elevated-bg); border-color: var(--xf-card-border); color: var(--xf-text-strong);')
-            probe_label = '探针设置' if ADMIN_CONFIG.get('probe_enabled', True) else '探针已关闭'
-            probe_icon = 'tune' if ADMIN_CONFIG.get('probe_enabled', True) else 'sensors_off'
-            ui.button(probe_label, icon=probe_icon, on_click=lambda: asyncio.create_task(_render_probe())).props(
                 'flat align=left').classes(theme['top_btn']).style(
                 'background: var(--xf-elevated-bg); border-color: var(--xf-card-border); color: var(--xf-text-strong);')
             ui.button('订阅管理', icon='rss_feed', on_click=lambda: asyncio.create_task(_load_subs())).props(
@@ -495,7 +492,16 @@ def render_sidebar_content():
 
     with ui.column().classes(theme['bottom_wrap']).style(
             'border-color: var(--xf-card-border); background: var(--xf-bg-main);'):
+        ui.button('分组管理', icon='settings', on_click=lambda: open_unified_group_manager('manage')).props(
+            'flat align=left').classes(theme['bottom_btn']).style(
+            'background: var(--xf-elevated-bg); border-color: var(--xf-card-border); color: var(--xf-text-strong);')
+        ui.button('排序视图', icon='sort', on_click=open_group_sort_dialog).props(
+            'flat align=left').classes(theme['bottom_btn']).style(
+            'background: var(--xf-elevated-bg); border-color: var(--xf-card-border); color: var(--xf-text-strong);')
         ui.button('批量 SSH 执行', icon='playlist_play', on_click=batch_ssh_manager.open_dialog).props(
+            'flat align=left').classes(theme['bottom_btn']).style(
+            'background: var(--xf-elevated-bg); border-color: var(--xf-card-border); color: var(--xf-text-strong);')
+        ui.button('探针与通知设置', icon='tune', on_click=open_probe_settings_dialog).props(
             'flat align=left').classes(theme['bottom_btn']).style(
             'background: var(--xf-elevated-bg); border-color: var(--xf-card-border); color: var(--xf-text-strong);')
         ui.button('Cloudflare 设置', icon='cloud', on_click=open_cloudflare_settings_dialog).props(
@@ -513,12 +519,6 @@ async def _load_dashboard():
     from app.ui.components.dashboard import load_dashboard_stats
 
     await load_dashboard_stats()
-
-
-async def _render_probe():
-    from app.ui.pages.probe_page import render_probe_page
-
-    await render_probe_page()
 
 
 async def _load_subs():
