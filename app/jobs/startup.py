@@ -1,5 +1,4 @@
 import asyncio
-from concurrent.futures import ProcessPoolExecutor
 
 from app.core.logging import logger, scheduler
 from app.core.state import ADMIN_CONFIG
@@ -10,11 +9,6 @@ from app.jobs.traffic import job_sync_all_traffic
 
 
 async def startup_sequence():
-    from app.core import state
-
-    state.PROCESS_POOL = ProcessPoolExecutor(max_workers=4)
-    logger.info('🚀 进程池已启动 (ProcessPoolExecutor)')
-
     scheduler.add_job(job_sync_all_traffic, 'interval', hours=24, id='traffic_sync', replace_existing=True, max_instances=1)
     scheduler.add_job(job_monitor_status, 'interval', seconds=120, id='status_monitor', replace_existing=True, max_instances=1)
     scheduler.add_job(job_sync_domain_ips, 'interval', hours=1, id='domain_ip_sync', replace_existing=True, max_instances=1)

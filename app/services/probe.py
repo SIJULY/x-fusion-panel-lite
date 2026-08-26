@@ -14,9 +14,7 @@ from app.core.logging import logger
 from app.core.state import (
     ADMIN_CONFIG,
     NODES_DATA,
-    PING_CACHE,
     PROBE_DATA_CACHE,
-    PROCESS_POOL,
     SERVERS_CACHE,
 )
 from app.services.ssh import get_ssh_client, _ssh_exec_wrapper
@@ -24,7 +22,6 @@ from app.services.xui_fetch import merge_local_node_fields
 from app.services.traffic_guard import check_and_handle_traffic_limit
 from app.storage.repositories import save_servers
 from app.utils.geo import get_flag_for_country
-from app.utils.network import sync_ping_worker
 
 
 # 延迟导入的跨模块函数：
@@ -141,36 +138,6 @@ async def get_server_status(server_conf):
                 return {'status': 'offline', 'msg': '探针离线 (超时)'}
 
     return {'status': 'offline', 'msg': '未安装探针'}
-
-
-async def batch_ping_nodes(nodes, raw_host):
-    """
-    使用多进程池并行 Ping，彻底解放主线程。
-    """
-    if not PROCESS_POOL:
-        return
-
-    loop = asyncio.get_running_loop()
-
-    targets = []
-    for n in nodes:
-        host = n.get('listen')
-        if not host or host == '0.0.0.0':
-            host = raw_host
-        port = n.get('port')
-        key = f"{host}:{port}"
-        targets.append((host, port, key))
-
-    async def run_single_ping(t_host, t_port, t_key):
-        try:
-            latency = await loop.run_in_executor(PROCESS_POOL, sync_ping_worker, t_host, t_port)
-            PING_CACHE[t_key] = latency
-        except:
-            PING_CACHE[t_key] = -1
-
-    tasks = [run_single_ping(h, p, k) for h, p, k in targets]
-    if tasks:
-        await asyncio.gather(*tasks)
 
 
 async def probe_push_data(request: Request):

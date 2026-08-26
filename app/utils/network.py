@@ -1,22 +1,9 @@
 import asyncio
 import socket
-import time
 
 from nicegui import run
 
 from app.core import state
-
-
-def sync_ping_worker(host, port):
-    try:
-        start = time.time()
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(3)
-        sock.connect((host, int(port)))
-        sock.close()
-        return int((time.time() - start) * 1000)
-    except:
-        return -1
 
 
 def get_dynamic_origin():
