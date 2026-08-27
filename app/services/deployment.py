@@ -8,6 +8,7 @@ from app.core.config import (
     SNELL_INSTALL_SCRIPT_TEMPLATE,
     XHTTP_INSTALL_SCRIPT_TEMPLATE,
 )
+from app.core.logging import logger
 from app.services.cloudflare import CloudflareHandler
 from app.services.ssh import _ssh_exec_wrapper
 from app.storage.repositories import save_servers
@@ -356,7 +357,7 @@ async def open_deploy_hysteria_dialog(server_conf, callback):
                         log_area.push("❌ SSH 执行失败，请查看上方详细日志")
                 except Exception as e:
                     log_area.push(f"❌ 异常: {e}")
-                    print(e)
+                    logger.exception("一键部署失败")
                 finally:
                     btn_cancel.enable()
                     btn_deploy.props(remove='loading')
@@ -450,7 +451,7 @@ async def open_deploy_snell_dialog(server_conf, callback):
                         log_area.push("❌ SSH 连接失败，请查看上方详细日志")
                 except Exception as e:
                     log_area.push(f"❌ 异常: {e}")
-                    print(e)
+                    logger.exception("一键部署失败")
                 finally:
                     btn_cancel.enable()
                     btn_deploy.props(remove='loading')

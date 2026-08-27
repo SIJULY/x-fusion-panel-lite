@@ -230,15 +230,15 @@ def build_globe_js_logic(is_dark: bool) -> str:
 
 async def refresh_dashboard_ui():
     try:
-        logger.info(f"[Dashboard] refresh_dashboard_ui called | scope={CURRENT_VIEW_STATE.get('scope')} servers_cache={len(SERVERS_CACHE)} refs_keys={list(DASHBOARD_REFS.keys())}")
+        logger.debug(f"[Dashboard] refresh_dashboard_ui called | scope={CURRENT_VIEW_STATE.get('scope')} servers_cache={len(SERVERS_CACHE)} refs_keys={list(DASHBOARD_REFS.keys())}")
         if not DASHBOARD_REFS.get('servers'):
-            logger.info("[Dashboard] refresh_dashboard_ui skipped | servers ref missing")
+            logger.debug("[Dashboard] refresh_dashboard_ui skipped | servers ref missing")
             return
 
         data = calculate_dashboard_data()
-        logger.info(f"[Dashboard] refresh_dashboard_ui data={data}")
+        logger.debug(f"[Dashboard] refresh_dashboard_ui data={data}")
         if not data:
-            logger.info("[Dashboard] refresh_dashboard_ui skipped | data missing")
+            logger.debug("[Dashboard] refresh_dashboard_ui skipped | data missing")
             return
 
         if DASHBOARD_REFS.get('servers'):
@@ -311,7 +311,7 @@ async def load_dashboard_stats():
     app.storage.user['last_view_scope'] = 'DASHBOARD'
     app.storage.user['last_view_data'] = None
     app.storage.user['last_view_page'] = 1
-    logger.info(f"[Dashboard] load_dashboard_stats start | servers_cache={len(SERVERS_CACHE)} refs_before={list(DASHBOARD_REFS.keys())}")
+    logger.debug(f"[Dashboard] load_dashboard_stats start | servers_cache={len(SERVERS_CACHE)} refs_before={list(DASHBOARD_REFS.keys())}")
 
     is_dark = bool(app.storage.user.get('is_dark', True))
     overview_wrap_cls = 'w-full items-center gap-3 border-b pb-3 mb-4'
@@ -341,7 +341,7 @@ async def load_dashboard_stats():
     content_container.style('background-color: var(--xf-bg-main);')
 
     init_data = calculate_dashboard_data()
-    logger.info(f"[Dashboard] load_dashboard_stats init_data={init_data}")
+    logger.debug(f"[Dashboard] load_dashboard_stats init_data={init_data}")
     if not init_data:
         init_data = {
             "servers": "0/0", "nodes": "0", "traffic": "0 GB", "subs": "0",
@@ -374,20 +374,21 @@ async def load_dashboard_stats():
     with content_container:
         ui.run_javascript("""
         if (window.dashInterval) clearInterval(window.dashInterval);
-        window.dashInterval = setInterval(async () => {
-            // 仪表盘已被切走（content_container 被清空）时统计卡片的 DOM 就不在了，
-            // 此时轮询拉回来的数据没有任何接收方，直接自行停掉，避免后台一直空转。
-            if (!document.getElementById('stat-servers')) {
-                clearInterval(window.dashInterval);
-                window.dashInterval = null;
-                return;
-            }
-            if (document.hidden) return;
+
+        // 拉一次数据并把结果画到卡片和柱状图上。成功返回 true，网络层失败返回 false。
+        window.dashFetchOnce = async function() {
+            let res;
             try {
-                const res = await fetch('/api/dashboard/live_data');
-                if (!res.ok) return;
+                res = await fetch('/api/dashboard/live_data');
+            } catch (e) {
+                // 只有网络层异常（连接被复用到一条已被服务端回收的 keep-alive socket，
+                // 表现为 ERR_EMPTY_RESPONSE）才走到这里，交给调用方决定要不要重试。
+                return false;
+            }
+            try {
+                if (!res.ok) return true;
                 const data = await res.json();
-                if (data.error) return;
+                if (data.error) return true;
 
                 const ids = ['stat-servers', 'stat-nodes', 'stat-traffic', 'stat-subs'];
                 const keys = ['servers', 'nodes', 'traffic', 'subs'];
@@ -407,6 +408,25 @@ async def load_dashboard_stats():
                     }
                 }
             } catch (e) {}
+            return true;
+        };
+
+        window.dashInterval = setInterval(async () => {
+            // 仪表盘已被切走（content_container 被清空）时统计卡片的 DOM 就不在了，
+            // 此时轮询拉回来的数据没有任何接收方，直接自行停掉，避免后台一直空转。
+            if (!document.getElementById('stat-servers')) {
+                clearInterval(window.dashInterval);
+                window.dashInterval = null;
+                return;
+            }
+            if (document.hidden) return;
+
+            // 轮询自己会停，离开仪表盘超过 timeout_keep_alive(60s) 后服务端会回收那条
+            // 空闲连接，但浏览器并不知道；切回来的第一次 fetch 复用死 socket 就会报
+            // ERR_EMPTY_RESPONSE（控制台一条红线）。立刻重试一次即可，此时浏览器会
+            // 新建连接，所以第二次必然走在活的 socket 上。
+            const ok = await window.dashFetchOnce();
+            if (!ok) await window.dashFetchOnce();
         }, 3000);
 
         window.applyDashboardTheme = function() {
@@ -486,7 +506,7 @@ async def load_dashboard_stats():
             create_stat_card('nodes', 'stat-nodes', '节点总数', 'Active Nodes', 'hub', 'nodes', init_data['nodes'])
             create_stat_card('traffic', 'stat-traffic', '总流量消耗', 'Total Usage', 'bolt', 'traffic', init_data['traffic'])
             create_stat_card('subs', 'stat-subs', '订阅配置', 'Subscriptions', 'rss_feed', 'subs', init_data['subs'])
-            logger.info(f"[Dashboard] stat refs assigned | refs_now={list(DASHBOARD_REFS.keys())}")
+            logger.debug(f"[Dashboard] stat refs assigned | refs_now={list(DASHBOARD_REFS.keys())}")
 
         with ui.row().classes('w-full gap-6 mb-6 flex-wrap xl:flex-nowrap items-stretch'):
             with ui.card().classes(f'xl:w-2/3 {chart_card_cls}').style('background: var(--xf-panel-bg); border-color: var(--xf-card-border); box-shadow: 0 8px 24px rgba(15,23,42,0.10);'):

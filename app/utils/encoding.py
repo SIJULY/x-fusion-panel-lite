@@ -2,6 +2,8 @@ import base64
 import json
 from urllib.parse import quote
 
+from app.core.logging import logger
+
 
 def _load_json_object(value):
     if isinstance(value, dict):
@@ -261,7 +263,7 @@ def parse_vless_link_to_node(link, remark_override=None):
         return node
 
     except Exception as e:
-        print(f"[Error] 解析 VLESS 链接失败: {e}")
+        logger.warning(f"⚠️ 解析 VLESS 链接失败: {e}")
         return None
 
 

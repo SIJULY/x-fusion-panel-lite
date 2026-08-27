@@ -7,7 +7,7 @@ from fastapi.responses import RedirectResponse
 from nicegui import app, run, ui
 
 from app.core.config import AUTO_REGISTER_SECRET
-from app.core.logging import logger
+from app.core.logging import logger, scrub
 from app.core.state import ADMIN_CONFIG, SERVERS_CACHE
 from app.storage.repositories import save_admin_config
 from app.ui.common.notifications import safe_copy_to_clipboard
@@ -681,7 +681,7 @@ def main_page(request: Request):
     from app.ui.pages import content_router
 
     content_router.content_container = ui.column().classes('w-full h-full min-h-[calc(100vh-64px)] pl-4 pr-4 pt-4 overflow-y-auto').props('id=xf-content-container').style(f'background-color: {current_theme["content_bg"]};')
-    logger.info(f"[MainPage] content_container assigned | id={id(content_router.content_container)}")
+    logger.debug(f"[MainPage] content_container assigned | id={id(content_router.content_container)}")
 
     async def auto_init_system_settings():
         try:
@@ -720,7 +720,7 @@ def main_page(request: Request):
         from app.ui.pages.content_router import refresh_content
         from app.ui.pages.subs_page import load_subs_view
 
-        logger.info(f"[MainPage] restore_last_view start | stored_scope={app.storage.user.get('last_view_scope', 'DASHBOARD')} stored_data={app.storage.user.get('last_view_data', None)} content_container_id={id(content_router.content_container) if content_router.content_container else None}")
+        logger.debug(f"[MainPage] restore_last_view start | stored_scope={app.storage.user.get('last_view_scope', 'DASHBOARD')} stored_data={app.storage.user.get('last_view_data', None)} content_container_id={id(content_router.content_container) if content_router.content_container else None}")
 
         last_scope = app.storage.user.get('last_view_scope', 'DASHBOARD')
         last_data_id = app.storage.user.get('last_view_data', None)
@@ -736,13 +736,13 @@ def main_page(request: Request):
                 last_scope = 'DASHBOARD'
 
         if last_scope == 'DASHBOARD':
-            logger.info("[MainPage] restore_last_view branch=DASHBOARD")
+            logger.debug("[MainPage] restore_last_view branch=DASHBOARD")
             await load_dashboard_stats()
         elif last_scope == 'SUBS':
-            logger.info("[MainPage] restore_last_view branch=SUBS")
+            logger.debug("[MainPage] restore_last_view branch=SUBS")
             await load_subs_view()
         else:
-            logger.info(f"[MainPage] restore_last_view branch={last_scope} target_data={target_data} client_present={page_client is not None}")
+            logger.debug(f"[MainPage] restore_last_view branch={last_scope} target_data={scrub(target_data)} client_present={page_client is not None}")
             await refresh_content(last_scope, target_data, page_num=last_page, manual_client=page_client)
         logger.info(f'♻️ 自动恢复视图: {last_scope}')
 

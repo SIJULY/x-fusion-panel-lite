@@ -1115,7 +1115,7 @@ async def render_single_ssh_view(server_conf):
                         with ui.scroll_area().classes('w-full h-full'):
                             render_file_list()
 
-    _server_dialog.logger.info(f"[SingleSSHRoute] page opened | key={server_key}")
+    _server_dialog.logger.debug(f"[SingleSSHRoute] page opened | key={server_key}")
 
     # ── 拖拽 + 高度锁定 JS（基于视口位置计算，彻底绕开 flex 链断裂问题）─
     ui.run_javascript(f'''

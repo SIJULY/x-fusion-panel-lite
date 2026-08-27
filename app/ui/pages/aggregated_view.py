@@ -2,6 +2,7 @@ import asyncio
 
 from nicegui import app, ui
 
+from app.core.logging import logger
 from app.core.state import CURRENT_VIEW_STATE, NODES_DATA, SERVERS_CACHE
 from app.ui.components.server_rows import draw_row
 
@@ -92,7 +93,7 @@ async def render_aggregated_view(server_list, hide_group_column=False, initial_p
 
         current_scope = CURRENT_VIEW_STATE.get('scope', 'ALL')
         current_data = CURRENT_VIEW_STATE.get('data', None)
-        print(f'👉 [Debug] 翻页至: {target_page} (自然浏览)', flush=True)
+        logger.debug(f'[AggregatedView] 翻页至: {target_page} (自然浏览)')
 
         with parent_client:
             from app.ui.pages.content_router import refresh_content

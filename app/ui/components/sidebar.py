@@ -4,7 +4,7 @@ import json
 from fastapi import Request
 from nicegui import app, ui
 
-from app.core.logging import logger
+from app.core.logging import logger, scrub
 
 from app.core import state
 from app.core.state import (
@@ -107,8 +107,8 @@ def _sidebar_theme():
 
 
 async def on_server_click_handler(server):
-    logger.info(
-        f"[SidebarClick] on_server_click_handler called | server_url={server.get('url')} server_name={server.get('name')} current_view_before={CURRENT_VIEW_STATE}")
+    logger.debug(
+        f"[SidebarClick] on_server_click_handler called | server_url={server.get('url')} server_name={server.get('name')} current_view_before={scrub(CURRENT_VIEW_STATE)}")
     current_scope = CURRENT_VIEW_STATE.get('scope')
     current_data = CURRENT_VIEW_STATE.get('data')
 
@@ -131,8 +131,8 @@ async def on_server_click_handler(server):
     from app.ui.pages.content_router import refresh_content
 
     await refresh_content('SINGLE', server)
-    logger.info(
-        f"[SidebarClick] on_server_click_handler done | server_url={server.get('url')} current_view_after={CURRENT_VIEW_STATE}")
+    logger.debug(
+        f"[SidebarClick] on_server_click_handler done | server_url={server.get('url')} current_view_after={scrub(CURRENT_VIEW_STATE)}")
 
 
 def render_single_sidebar_row(s):
@@ -165,7 +165,7 @@ def render_single_sidebar_row(s):
 def render_sidebar_content():
     theme = _sidebar_theme()
 
-    logger.info(
+    logger.debug(
         f"[Sidebar] render_sidebar_content called | servers={len(SERVERS_CACHE)} before_clear_groups={len(SIDEBAR_UI_REFS.get('groups', {}))} before_clear_rows={len(SIDEBAR_UI_REFS.get('rows', {}))}")
 
     SIDEBAR_UI_REFS['groups'].clear()
@@ -486,7 +486,7 @@ def render_sidebar_content():
         })();
     ''')
 
-    logger.info(
+    logger.debug(
         f"[Sidebar] render_sidebar_content finished | servers={len(SERVERS_CACHE)} groups={len(SIDEBAR_UI_REFS.get('groups', {}))} rows={len(SIDEBAR_UI_REFS.get('rows', {}))}")
 
     with ui.column().classes(theme['bottom_wrap']).style(
@@ -523,11 +523,11 @@ async def _load_subs():
 async def _refresh_scope(scope, data=None, client=None):
     from app.ui.pages.content_router import refresh_content
 
-    logger.info(
-        f"[SidebarClick] _refresh_scope called | scope={scope} data={data} client_present={client is not None} current_view_before={CURRENT_VIEW_STATE}")
+    logger.debug(
+        f"[SidebarClick] _refresh_scope called | scope={scope} data={scrub(data)} client_present={client is not None} current_view_before={scrub(CURRENT_VIEW_STATE)}")
     await refresh_content(scope, data, manual_client=client)
-    logger.info(
-        f"[SidebarClick] _refresh_scope done | scope={scope} data={data} client_present={client is not None} current_view_after={CURRENT_VIEW_STATE}")
+    logger.debug(
+        f"[SidebarClick] _refresh_scope done | scope={scope} data={scrub(data)} client_present={client is not None} current_view_after={scrub(CURRENT_VIEW_STATE)}")
 
 
 async def _open_server_dialog(index, client=None):

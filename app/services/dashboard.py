@@ -116,7 +116,5 @@ def calculate_dashboard_data():
         logger.debug(f"[DashboardCalc] result={result}")
         return result
     except Exception as e:
-        print(f"Error calculating dashboard data: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.exception(f"仪表盘数据计算失败: {e}")
         return None

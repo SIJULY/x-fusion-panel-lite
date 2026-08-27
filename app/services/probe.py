@@ -376,7 +376,7 @@ async def auto_register_node(request: Request):
 
         secret = data.get('secret')
         if secret != AUTO_REGISTER_SECRET:
-            logger.warning(f"⚠️ [自动注册] 密钥错误: {secret}")
+            logger.warning(f"⚠️ [自动注册] 密钥错误: {'*' * len(str(secret or ''))}")
             return Response(json.dumps({"success": False, "msg": "密钥错误"}), status_code=403, media_type="application/json")
 
         ip = data.get('ip')

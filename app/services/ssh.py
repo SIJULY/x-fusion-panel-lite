@@ -5,6 +5,7 @@ import uuid
 import asyncssh
 from nicegui import app, ui
 
+from app.core.logging import logger
 from app.storage.repositories import load_global_key
 
 ssh_instances = {}
@@ -30,7 +31,7 @@ async def get_ssh_client(server_data):
     user = server_data.get('ssh_user') or 'root'
     auth_type = server_data.get('ssh_auth_type', '全局密钥').strip()
 
-    print(f"🔌 [SSH Debug] 连接目标: {host}, 用户: {user}, 认证方式: [{auth_type}]", flush=True)
+    logger.debug(f"[SSH] 连接目标: {host}, 用户: {user}, 认证方式: [{auth_type}]")
 
     options = {
         'host': host,

@@ -9,6 +9,8 @@ def safe_notify(message, type='info', timeout=3000):
     try:
         ui.notify(message, type=type, timeout=timeout)
     except:
+        # 走到这里说明没有可用的客户端上下文，这条提示没能弹给任何人。
+        # 量很小（只在异常路径触发），且可能是本该让用户看到的报错，保留 INFO。
         logger.info(f"[Notify] {message}")
 
 
