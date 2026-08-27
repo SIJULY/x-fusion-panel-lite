@@ -48,8 +48,9 @@ async def api_auto_register_node(request: Request):
 
 
 @app.get('/sub/{token}')
-async def api_sub_handler(token: str):
-    return await sub_handler(token)
+async def api_sub_handler(token: str, request: Request):
+    # 需要 request 才能读客户端 UA（自动适配输出格式）和 ?target= 覆盖
+    return await sub_handler(token, request)
 
 
 @app.get('/sub/group/{group_b64}')

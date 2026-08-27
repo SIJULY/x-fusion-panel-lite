@@ -16,6 +16,11 @@ DNS_WAITING_LABELS = {}
 ALERT_CACHE = {}
 FAILURE_COUNTS = {}
 
+# 订阅拉取统计 {token: {count, last_at, last_ua, last_ip}}。
+# 只放内存、不落库：/sub/{token} 是公网无鉴权端点，每次拉取写一次 DB 等于留了个
+# 放大写入的口子。重启清零可以接受，UI 上已注明。
+SUB_ACCESS_STATS = {}
+
 DASHBOARD_REFS = {}
 SIDEBAR_UI_REFS = {
     'groups': {},
