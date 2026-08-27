@@ -58,7 +58,7 @@ _LIVE_CONFIG_KEYS = {
 
 # 这三个键标识「本面板自己」，跨面板导入时必须保留本地值，否则两台面板会串台：
 #   manager_base_url —— 探针上报数据的目标地址。装探针时会烧进 VPS 上的
-#       /root/x_fusion_agent.py，导入旧面板的地址会让本面板新装的探针继续报给旧面板。
+#       /root/x_fusion_agent_lite.py，导入旧面板的地址会让本面板新装的探针继续报给旧面板。
 #   probe_token      —— 本面板校验探针推送用的密钥，首次启动时随机生成，两台面板必然不同。
 #   session_version  —— 用来作废旧登录态，导入别的面板的值会影响当前会话。
 _PANEL_IDENTITY_KEYS = {'manager_base_url', 'probe_token', 'session_version'}
@@ -129,7 +129,8 @@ async def open_data_mgmt_dialog():
                         ui.label(
                             '可直接粘贴完整版的备份：已删功能留下的配置项会自动忽略；'
                             '本面板地址（manager_base_url）与探针密钥始终保留本地值，不会被旧面板覆盖。'
-                            '若备份来自另一台面板，恢复后需在本面板重装一次探针才会把上报切过来。'
+                            '若备份来自另一台面板，恢复后在本面板装一次探针即可拿到实时数据；'
+                            '本面板的 agent 用独立名字，与完整版的探针可在同一台机器上并存。'
                         ).classes('text-xs leading-relaxed text-slate-500')
 
                         async def process_import():
@@ -199,16 +200,19 @@ async def open_data_mgmt_dialog():
                                 safe_notify(msg, 'positive')
 
                                 # 跨面板导入时最容易踩的坑：备份来自另一台面板，那些机器上的
-                                # 探针地址烧在 /root/x_fusion_agent.py 里，仍然只上报给旧面板，
-                                # 本面板会一直显示「探针离线 (超时)」。这里明确提示一次。
+                                # 探针只上报给旧面板，本面板会一直显示「探针离线 (超时)」。
+                                # 好消息是本面板的 agent 用的是独立名字（x-fusion-agent-lite /
+                                # /root/x_fusion_agent_lite.py），在这里装探针不会覆盖旧面板的
+                                # agent，两个面板可以各自拿到实时数据。这里明确提示一次。
                                 old_base = str((data.get('admin_config') or {}).get('manager_base_url') or '')
                                 cur_base = str(ADMIN_CONFIG.get('manager_base_url') or '')
                                 if old_base and old_base.rstrip('/') != cur_base.rstrip('/'):
                                     safe_notify(
                                         f'备份来自另一台面板（{old_base}），已保留本面板地址'
-                                        f'（{cur_base or "未设置"}）。这些机器上的探针目前仍上报给旧面板，'
-                                        f'本面板会显示「探针离线」；要让本面板接管需在此重装一次探针，'
-                                        f'重装只覆盖 agent，不影响 xray / x-ui 等代理服务。',
+                                        f'（{cur_base or "未设置"}）。这些机器上的探针目前只上报给旧面板，'
+                                        f'本面板会显示「探针离线」；在本面板给它们装一次探针即可，'
+                                        f'本面板的 agent 用独立名字，不会覆盖旧面板的探针，'
+                                        f'也不影响 xray / x-ui 等代理服务，两个面板可以并存。',
                                         'warning', timeout=20000,
                                     )
                                 d.close()

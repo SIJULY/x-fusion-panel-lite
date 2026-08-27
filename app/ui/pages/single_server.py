@@ -1339,8 +1339,16 @@ PY'''
                         async def start_uninstall():
                             d.close()
                             notification = ui.notification(message='正在执行卸载与清理...', timeout=0, spinner=True)
-                            success, output = await run.io_bound(
-                                lambda: _ssh_exec_wrapper(server_conf, XHTTP_UNINSTALL_SCRIPT))
+                            # _ssh_exec_wrapper 是 async 函数，直接 await。
+                            # 套 run.io_bound 会把 lambda 丢进线程池，而 lambda 调用
+                            # async 函数只是造出一个协程对象就返回，协程从未执行，
+                            # 解包时抛 TypeError: cannot unpack non-iterable coroutine
+                            # object——节点的「卸载并清理环境」会直接失败在这一行。
+                            try:
+                                success, output = await _ssh_exec_wrapper(server_conf, XHTTP_UNINSTALL_SCRIPT)
+                            except Exception as e:
+                                success, output = False, str(e)
+                                logger.warning(f"⚠️ [卸载节点] 远程执行异常: {e}")
                             notification.dismiss()
                             if success:
                                 safe_notify('✅ 服务已卸载，进程已清理', 'positive')

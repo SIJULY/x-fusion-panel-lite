@@ -494,7 +494,7 @@ def render_sidebar_content():
         ui.button('批量 SSH 执行', icon='playlist_play', on_click=batch_ssh_manager.open_dialog).props(
             'flat align=left').classes(theme['bottom_btn']).style(
             'background: var(--xf-elevated-bg); border-color: var(--xf-card-border); color: var(--xf-text-strong);')
-        ui.button('探针与通知设置', icon='tune', on_click=open_probe_settings_dialog).props(
+        ui.button('连接与通知设置', icon='tune', on_click=open_probe_settings_dialog).props(
             'flat align=left').classes(theme['bottom_btn']).style(
             'background: var(--xf-elevated-bg); border-color: var(--xf-card-border); color: var(--xf-text-strong);')
         ui.button('Cloudflare 设置', icon='cloud', on_click=open_cloudflare_settings_dialog).props(

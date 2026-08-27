@@ -496,6 +496,26 @@ else
 fi
 """
 
+# 探针在远端 VPS 上的落地名字。
+#
+# 精简版故意和完整版取不同的名字（完整版是 x-fusion-agent /
+# /root/x_fusion_agent.py），这样同一台 VPS 上两个面板的探针是两个彼此独立的
+# systemd 服务，各自写自己的脚本文件、各自上报给自己的面板，装谁都不会覆盖谁。
+# 之所以能安全共存，是因为 agent 全程只读不写：它只读 /proc/*、/etc/os-release
+# 和 /etc/x-ui/x-ui.db（还是 mode=ro 只读 URI 打开的），不监听端口、不写日志、
+# 不加锁，两个进程之间没有任何可争的资源。
+#
+# 改名会影响 4 个地方，都由这两个常量统一驱动，不要再在别处硬编码：
+#   本文件 PROBE_INSTALL_SCRIPT 模板里的 __AGENT_NAME__ / __AGENT_SCRIPT__ 占位符
+#   app/services/probe.py 的占位符替换与安装后校验
+#   app/ui/dialogs/server_dialog.py 删除服务器时的卸载命令
+PROBE_AGENT_NAME = 'x-fusion-agent-lite'
+PROBE_AGENT_SCRIPT = '/root/x_fusion_agent_lite.py'
+
+# 完整版（以及本项目早期版本）用的名字，只在「清理自己装过的旧探针」时用到。
+PROBE_LEGACY_AGENT_NAME = 'x-fusion-agent'
+PROBE_LEGACY_AGENT_SCRIPT = '/root/x_fusion_agent.py'
+
 PROBE_INSTALL_SCRIPT = r"""
 bash -c '
 # 1. 提升权限
@@ -512,7 +532,7 @@ elif [ -f /etc/alpine-release ]; then
 fi
 
 # 3. 写入 Python 脚本
-cat > /root/x_fusion_agent.py << "PYTHON_EOF"
+cat > __AGENT_SCRIPT__ << "PYTHON_EOF"
 import time, json, os, socket, sys, subprocess, platform, sqlite3
 import urllib.request, urllib.error
 import ssl
@@ -692,15 +712,15 @@ if __name__ == "__main__":
 PYTHON_EOF
 
 # 4. 创建服务
-cat > /etc/systemd/system/x-fusion-agent.service << SERVICE_EOF
+cat > /etc/systemd/system/__AGENT_NAME__.service << SERVICE_EOF
 [Unit]
-Description=X-Fusion Probe Agent
+Description=X-Fusion Probe Agent (Lite)
 After=network.target
 
 [Service]
 Type=simple
 User=root
-ExecStart=/usr/bin/python3 /root/x_fusion_agent.py
+ExecStart=/usr/bin/python3 __AGENT_SCRIPT__
 Restart=always
 RestartSec=5
 
@@ -710,8 +730,28 @@ SERVICE_EOF
 
 # 5. 启动
 systemctl daemon-reload
-systemctl enable x-fusion-agent
-systemctl restart x-fusion-agent
+systemctl enable __AGENT_NAME__
+systemctl restart __AGENT_NAME__
+
+# 6. 清理「本面板自己装过的」旧名字探针
+# 本项目早期版本和完整版共用 x-fusion-agent / /root/x_fusion_agent.py 这套名字。
+# 从旧版本升上来的机器上会残留那个旧服务：它和新服务推的是同一批数据，会变成
+# 每 5 秒推两遍；更麻烦的是面板删除服务器时的卸载命令只认新名字，旧服务会一直
+# 推下去，谁也管不到它。
+# 关键是必须先确认那个旧脚本的上报地址就是本面板——只有这样才说明它是本面板自己
+# 装的老探针，可以放心删。如果里面写的是别的面板地址（比如用户原来的完整版面板），
+# 那它属于另一个面板，必须原样留着，否则就把用户原来的面板搞断线了，而这恰好是
+# 本次改名要避免的事。
+# 另外先要求新服务已经起来，避免新服务启动失败时把还能用的旧服务一起删掉。
+if systemctl is-active --quiet __AGENT_NAME__ && [ -f __LEGACY_AGENT_SCRIPT__ ] && grep -qF "__MANAGER_URL__/api/probe/push" __LEGACY_AGENT_SCRIPT__; then
+    systemctl stop __LEGACY_AGENT_NAME__ >/dev/null 2>&1
+    systemctl disable __LEGACY_AGENT_NAME__ >/dev/null 2>&1
+    rm -f /etc/systemd/system/__LEGACY_AGENT_NAME__.service
+    rm -f __LEGACY_AGENT_SCRIPT__
+    systemctl daemon-reload >/dev/null 2>&1
+    echo "XFUSION_LEGACY_AGENT_REMOVED"
+fi
+
 exit 0
 '
 """

@@ -3,7 +3,7 @@ import socket
 
 from nicegui import app, run, ui
 
-from app.core.config import AUTO_COUNTRY_MAP
+from app.core.config import AUTO_COUNTRY_MAP, PROBE_AGENT_NAME, PROBE_AGENT_SCRIPT
 from app.core.logging import logger
 from app.core.state import (
     CURRENT_VIEW_STATE,
@@ -385,12 +385,35 @@ async def open_server_dialog(idx=None):
                                 if will_uninstall:
                                     loading_notify = ui.notification('正在尝试连接并卸载探针...', timeout=None, spinner=True)
                                     try:
-                                        uninstall_cmd = "systemctl stop x-fusion-agent && systemctl disable x-fusion-agent && rm -f /etc/systemd/system/x-fusion-agent.service && systemctl daemon-reload && rm -f /root/x_fusion_agent.py"
-                                        success, output = await run.io_bound(lambda: _ssh_exec_wrapper(target_srv, uninstall_cmd))
+                                        # 只卸载本面板自己的探针（x-fusion-agent-lite），绝不去动
+                                        # 完整版的 x-fusion-agent——同一台 VPS 上可能两个面板的
+                                        # 探针并存，把别人的删了就等于把用户另一个面板搞断线。
+                                        uninstall_cmd = (
+                                            f"systemctl stop {PROBE_AGENT_NAME}"
+                                            f" && systemctl disable {PROBE_AGENT_NAME}"
+                                            f" && rm -f /etc/systemd/system/{PROBE_AGENT_NAME}.service"
+                                            f" && systemctl daemon-reload"
+                                            f" && rm -f {PROBE_AGENT_SCRIPT}"
+                                        )
+                                        # _ssh_exec_wrapper 是 async 函数，直接 await。
+                                        # 原来写的是 run.io_bound(lambda: _ssh_exec_wrapper(...))：
+                                        # io_bound 会把 lambda 丢到线程池里执行，而 lambda 调用一个
+                                        # async 函数只是「造出一个协程对象」就立刻返回，协程从未被
+                                        # 执行过。于是这里拿到的是协程对象而不是 (success, output)
+                                        # 元组，解包直接抛 TypeError: cannot unpack non-iterable
+                                        # coroutine object，整个 confirm_execution 中断在这一行，
+                                        # 下面的 SERVERS_CACHE.pop(idx) 永远走不到——表现就是
+                                        # 「勾了卸载探针的服务器删不掉」。
+                                        success, output = await _ssh_exec_wrapper(target_srv, uninstall_cmd)
                                         if success:
                                             ui.notify('✅ 远程探针已卸载清理', type='positive')
                                         else:
                                             ui.notify('⚠️ 远程卸载失败 (可能是连接超时)，将仅删除本地记录', type='warning')
+                                    except Exception as e:
+                                        # 卸载只是「顺手清理远端」，失败绝不能拦住本地删除，
+                                        # 否则机器一旦连不上就永远删不掉了。
+                                        logger.warning(f"⚠️ [删除服务器] 远程卸载探针异常，仅删除本地记录: {e}")
+                                        ui.notify(f'⚠️ 远程卸载异常（{e}），将仅删除本地记录', type='warning')
                                     finally:
                                         loading_notify.dismiss()
 

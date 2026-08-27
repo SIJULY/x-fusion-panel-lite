@@ -9,7 +9,15 @@ from fastapi import Request
 from fastapi.responses import Response
 from nicegui import run
 
-from app.core.config import AUTO_COUNTRY_MAP, AUTO_REGISTER_SECRET, PROBE_INSTALL_SCRIPT
+from app.core.config import (
+    AUTO_COUNTRY_MAP,
+    AUTO_REGISTER_SECRET,
+    PROBE_AGENT_NAME,
+    PROBE_AGENT_SCRIPT,
+    PROBE_INSTALL_SCRIPT,
+    PROBE_LEGACY_AGENT_NAME,
+    PROBE_LEGACY_AGENT_SCRIPT,
+)
 from app.core.logging import logger
 from app.core.state import (
     ADMIN_CONFIG,
@@ -47,7 +55,11 @@ async def install_probe_on_server(server_conf):
     real_script = PROBE_INSTALL_SCRIPT \
         .replace("__MANAGER_URL__", manager_url) \
         .replace("__TOKEN__", my_token) \
-        .replace("__SERVER_URL__", server_conf['url'])
+        .replace("__SERVER_URL__", server_conf['url']) \
+        .replace("__AGENT_SCRIPT__", PROBE_AGENT_SCRIPT) \
+        .replace("__AGENT_NAME__", PROBE_AGENT_NAME) \
+        .replace("__LEGACY_AGENT_SCRIPT__", PROBE_LEGACY_AGENT_SCRIPT) \
+        .replace("__LEGACY_AGENT_NAME__", PROBE_LEGACY_AGENT_NAME)
 
     def _sudo_wrap_command(command: str) -> str:
         """后台 SSH 推送安装时使用的非交互式提权包装。
@@ -105,10 +117,18 @@ async def install_probe_on_server(server_conf):
     try:
         success, output = await _ssh_exec_wrapper(server_conf, install_command, timeout=120)
         if success:
-            verify_cmd = _sudo_wrap_command("test -f /root/x_fusion_agent.py && test -f /etc/systemd/system/x-fusion-agent.service && systemctl is-active --quiet x-fusion-agent")
+            verify_cmd = _sudo_wrap_command(
+                f"test -f {PROBE_AGENT_SCRIPT}"
+                f" && test -f /etc/systemd/system/{PROBE_AGENT_NAME}.service"
+                f" && systemctl is-active --quiet {PROBE_AGENT_NAME}"
+            )
             verify_success, verify_output = await _ssh_exec_wrapper(server_conf, verify_cmd, timeout=30)
             if verify_success:
                 success, msg = True, "Agent 安装成功并启动"
+                if 'XFUSION_LEGACY_AGENT_REMOVED' in (output or ''):
+                    logger.info(
+                        f"🧹 [Push Agent] {name} 已清理本面板早期版本留下的 {PROBE_LEGACY_AGENT_NAME}"
+                    )
             else:
                 success, msg = False, f"安装后校验失败: {verify_output}"
         else:
