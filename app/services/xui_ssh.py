@@ -1,7 +1,6 @@
 import base64
 import json
 
-from nicegui import run
 
 from app.core.logging import logger
 from app.services.ssh import _ssh_exec_wrapper

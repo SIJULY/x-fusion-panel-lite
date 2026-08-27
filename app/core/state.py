@@ -1,5 +1,4 @@
 import asyncio
-import time
 
 
 SERVERS_CACHE = []
@@ -7,7 +6,6 @@ SUBS_CACHE = []
 NODES_DATA = {}
 ADMIN_CONFIG = {}
 INDEPENDENT_NODES_CACHE = []
-GLOBAL_UI_VERSION = time.time()
 
 SYNC_SEMAPHORE = asyncio.Semaphore(50)
 
@@ -19,7 +17,6 @@ ALERT_CACHE = {}
 FAILURE_COUNTS = {}
 
 DASHBOARD_REFS = {}
-UI_ROW_REFS = {}
 SIDEBAR_UI_REFS = {
     'groups': {},
     'rows': {},

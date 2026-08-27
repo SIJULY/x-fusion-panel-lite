@@ -1,19 +1,9 @@
 import os
-import time
 import json
-import asyncio
 import aiosqlite
 
 from app.core import state
-from app.core.config import (
-    ADMIN_CONFIG_FILE,
-    CONFIG_FILE,
-    GLOBAL_SSH_KEY_FILE,
-    NODES_CACHE_FILE,
-    SUBS_FILE,
-    INDEPENDENT_NODES_FILE,
-    DATA_DIR
-)
+from app.core.config import DATA_DIR, GLOBAL_SSH_KEY_FILE
 from app.core.logging import logger
 
 DB_FILE = os.path.join(DATA_DIR, "xfusion.db")
@@ -81,7 +71,6 @@ async def save_servers():
                 await db.execute("DELETE FROM servers")
                 
             await db.commit()
-        state.GLOBAL_UI_VERSION = time.time()
     except Exception as e:
         logger.error(f"❌ 批量保存 servers 到关系型表失败: {e}")
 
@@ -109,7 +98,6 @@ async def save_single_server(server_data):
 
 async def save_admin_config():
     await async_set_db_value("admin_config", state.ADMIN_CONFIG)
-    state.GLOBAL_UI_VERSION = time.time()
 
 
 async def save_subs():

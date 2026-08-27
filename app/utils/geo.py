@@ -1,7 +1,6 @@
 import httpx
-from nicegui import run
 
-from app.core.config import AUTO_COUNTRY_MAP, LOCATION_COORDS, MATCH_MAP
+from app.core.config import AUTO_COUNTRY_MAP, LOCATION_COORDS
 from app.core.state import IP_GEO_CACHE
 
 
@@ -43,12 +42,6 @@ COUNTRY_GROUP_ALIASES = {
     '🇸🇪 瑞典': ['🇸🇪', '瑞典', 'sweden', 'se', 'swe', 'stockholm', '斯德哥尔摩'],
     '🇨🇭 瑞士': ['🇨🇭', '瑞士', 'switzerland', 'ch', 'che', 'zurich', '苏黎世', 'geneva', '日内瓦'],
     '🇿🇦 南非': ['🇿🇦', '南非', 'south africa', 'za', 'johannesburg', '约翰内斯堡', 'cape town', '开普敦'],
-}
-
-ECHARTS_REGION_ALIASES = {
-    alias: canonical.split(' ', 1)[1 if ' ' in canonical else 0]
-    for canonical, aliases in COUNTRY_GROUP_ALIASES.items()
-    for alias in aliases
 }
 
 
@@ -105,37 +98,6 @@ def get_flag_for_country(country_name):
     return f"🏳️ {country_name_str}"
 
 
-async def auto_prepend_flag(name, url):
-    """
-    检查名字是否已经包含任意已知国旗。
-    - 如果包含：直接返回原名（尊重用户填写或面板自带的国旗）。
-    - 如果不包含：根据 IP 归属地自动添加。
-    """
-    if not name:
-        return name
-
-    for v in AUTO_COUNTRY_MAP.values():
-        flag_icon = v.split(' ')[0]
-        if flag_icon in name:
-            return name
-
-    try:
-        geo_info = await run.io_bound(fetch_geo_from_ip, url)
-        if not geo_info:
-            return name
-
-        country_name = geo_info[2]
-        flag_group = get_flag_for_country(country_name)
-        flag_icon = flag_group.split(' ')[0]
-
-        if flag_icon in name:
-            return name
-
-        return f"{flag_icon} {name}"
-    except Exception:
-        return name
-
-
 def detect_country_group(name, server_config=None):
     if server_config:
         saved_group = server_config.get('group')
@@ -177,22 +139,3 @@ def detect_country_group(name, server_config=None):
         return get_flag_for_country(server_config['_detected_region'])
 
     return '🏳️ 其他地区'
-
-
-def get_echarts_region_name(name_raw):
-    if not name_raw:
-        return None
-
-    name_str = str(name_raw).strip()
-    name_upper = name_str.upper()
-    name_lower = name_str.lower()
-
-    for alias in sorted(ECHARTS_REGION_ALIASES.keys(), key=len, reverse=True):
-        if alias.lower() in name_lower:
-            return ECHARTS_REGION_ALIASES[alias]
-
-    sorted_keys = sorted(MATCH_MAP.keys(), key=len, reverse=True)
-    for key in sorted_keys:
-        if key in name_upper:
-            return MATCH_MAP[key]
-    return None

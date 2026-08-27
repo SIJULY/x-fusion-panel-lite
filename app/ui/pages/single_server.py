@@ -4,13 +4,13 @@ import json
 from nicegui import run, ui
 
 from app.core.logging import logger
+from app.core import state
 from app.core.state import ADMIN_CONFIG, NODES_DATA, PROBE_DATA_CACHE, SERVERS_CACHE
 from app.services.cloudflare import CloudflareHandler
 from app.services.manager_factory import get_manager, has_ssh_target
-from app.services.ssh import _ssh_exec_wrapper, get_ssh_client
+from app.services.ssh import _ssh_exec_wrapper
 from app.services.traffic_guard import (
     ensure_traffic_limit_cycle,
-    get_current_cycle_key,
     get_traffic_cycle_label,
     get_traffic_cycle_used_bytes,
     get_traffic_limit_bytes,
@@ -27,12 +27,8 @@ from app.utils.encoding import generate_detail_config, generate_node_link
 from app.utils.formatters import format_bytes
 from app.ui.dialogs import server_dialog as _server_dialog
 
-REFRESH_CURRENT_NODES = lambda: None
-
 
 async def render_single_server_view(server_conf, force_refresh=False):
-    global REFRESH_CURRENT_NODES
-
     from nicegui import app
     is_dark = bool(app.storage.user.get('is_dark', True))
     page_bg = 'var(--xf-bg-main)'
@@ -48,7 +44,7 @@ async def render_single_server_view(server_conf, force_refresh=False):
             'background:var(--xf-tooltip-bg);color:var(--xf-tooltip-text);border:1px solid var(--xf-tooltip-border);box-shadow:var(--xf-tooltip-shadow);')
         return tip
 
-    SINGLE_COLS_NO_PING = _server_dialog.SINGLE_COLS_NO_PING
+    SINGLE_ROW_COLS = _server_dialog.SINGLE_ROW_COLS
     XHTTP_UNINSTALL_SCRIPT = _server_dialog.XHTTP_UNINSTALL_SCRIPT
     _sync_resolve_ip = _server_dialog._sync_resolve_ip
 
@@ -1051,7 +1047,7 @@ PY'''
                             row_accent = '#a855f7' if is_custom else '#14b8a6'
                             row_shadow = f'0 0 0 1px color-mix(in srgb, {row_accent} 18%, transparent), 0 0 16px color-mix(in srgb, {row_accent} {38 if is_dark else 16}%, transparent), 0 6px 18px rgba(15,23,42,0.10)'
                             with ui.element('div').classes(row_tech_cls).style(
-                                    f'{SINGLE_COLS_NO_PING} background: var(--xf-soft-bg); border-color: var(--xf-card-border); border-left-color: {row_accent}; box-shadow: {row_shadow};'):
+                                    f'{SINGLE_ROW_COLS} background: var(--xf-soft-bg); border-color: var(--xf-card-border); border-left-color: {row_accent}; box-shadow: {row_shadow};'):
                                 ui.element('div').classes(row_overlay_cls).style(
                                     f'background: linear-gradient(to right, color-mix(in srgb, {row_accent} 16%, transparent), transparent);')
                                 ui.label(n.get('remark', '未命名')).classes(
@@ -1237,8 +1233,7 @@ PY'''
 
                     render_node_list.refresh()
 
-                REFRESH_CURRENT_NODES = reload_and_refresh_ui
-                _server_dialog.REFRESH_CURRENT_NODES = reload_and_refresh_ui
+                state.REFRESH_CURRENT_NODES = reload_and_refresh_ui
 
                 async def refresh_after_inbound_change(delay_second_refresh=False, removed_inbound_id=None,
                                                        refresh_cloudflare=False):
@@ -1833,7 +1828,7 @@ PY'''
                     # Table Header 强锁高度
                     with ui.element('div').classes(
                             'grid w-full gap-4 font-bold pb-2 pt-2 pl-[48px] pr-[46px] text-[11px] tracking-wider flex-shrink-0 z-10 border-b border-[#1e3a5f]/50 text-cyan-600/80 bg-[#030712]' if is_dark else 'grid w-full gap-4 font-bold pb-2 pt-2 pl-[48px] pr-[46px] text-[11px] tracking-wider flex-shrink-0 z-10 border-b border-slate-300/90 text-sky-700/80 bg-[#f8fbff]').style(
-                        SINGLE_COLS_NO_PING):
+                        SINGLE_ROW_COLS):
                         ui.label('节点名称').classes('text-left pl-2')
                         ui.label('类型').classes('text-center')
                         ui.label('流量').classes('text-center')

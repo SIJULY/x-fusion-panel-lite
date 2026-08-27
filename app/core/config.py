@@ -35,9 +35,7 @@ AUTO_REGISTER_SECRET = os.getenv('XUI_SECRET_KEY', 'sijuly_secret_key_default')
 ADMIN_USER = os.getenv('XUI_USERNAME', 'admin')
 ADMIN_PASS = os.getenv('XUI_PASSWORD', 'admin')
 
-SYNC_COOLDOWN_SECONDS = 300
 PAGE_SIZE = 30
-SYNC_COOLDOWN = 1800
 
 AUTO_COUNTRY_MAP = {
     # --- 亚太地区 ---
@@ -140,36 +138,6 @@ LOCATION_COORDS = {
     'Sydney': (-33.86, 151.20), '悉尼': (-33.86, 151.20),
     '🇿🇦': (-30.55, 22.93), 'ZA': (-30.55, 22.93), 'South Africa': (-30.55, 22.93), '南非': (-30.55, 22.93),
     'Johannesburg': (-26.20, 28.04), '约翰内斯堡': (-26.20, 28.04),
-}
-
-MATCH_MAP = {
-    '🇨🇱': 'Chile', 'CHILE': 'Chile',
-    '🇧🇷': 'Brazil', 'BRAZIL': 'Brazil', 'BRA': 'Brazil', 'SAO PAULO': 'Brazil',
-    '🇦🇷': 'Argentina', 'ARGENTINA': 'Argentina', 'ARG': 'Argentina',
-    '🇨🇴': 'Colombia', 'COLOMBIA': 'Colombia', 'COL': 'Colombia',
-    '🇵🇪': 'Peru', 'PERU': 'Peru',
-    '🇺🇸': 'United States', 'USA': 'United States', 'UNITED STATES': 'United States', 'AMERICA': 'United States',
-    '🇨🇦': 'Canada', 'CANADA': 'Canada', 'CAN': 'Canada',
-    '🇲🇽': 'Mexico', 'MEXICO': 'Mexico', 'MEX': 'Mexico',
-    '🇬🇧': 'United Kingdom', 'UK': 'United Kingdom', 'GB': 'United Kingdom', 'UNITED KINGDOM': 'United Kingdom', 'LONDON': 'United Kingdom',
-    '🇩🇪': 'Germany', 'GERMANY': 'Germany', 'DEU': 'Germany', 'FRANKFURT': 'Germany',
-    '🇫🇷': 'France', 'FRANCE': 'France', 'FRA': 'France', 'PARIS': 'France', '法国': 'France', '巴黎': 'France',
-    '🇳🇱': 'Netherlands', 'NETHERLANDS': 'Netherlands', 'NLD': 'Netherlands', 'AMSTERDAM': 'Netherlands',
-    '🇷🇺': 'Russia', 'RUSSIA': 'Russia', 'RUS': 'Russia',
-    '🇮🇹': 'Italy', 'ITALY': 'Italy', 'ITA': 'Italy', 'MILAN': 'Italy',
-    '🇪🇸': 'Spain', 'SPAIN': 'Spain', 'ESP': 'Spain', 'MADRID': 'Spain',
-    '🇸🇪': 'Sweden', 'SWEDEN': 'Sweden', 'SWE': 'Sweden', 'STOCKHOLM': 'Sweden',
-    '🇨🇭': 'Switzerland', 'SWITZERLAND': 'Switzerland', 'CHE': 'Switzerland', 'ZURICH': 'Switzerland',
-    '🇨🇳': 'China', 'CHINA': 'China', '中国': 'China',
-    '🇭🇰': 'China', 'HONG KONG': 'China', '香港': 'China',
-    '🇲🇴': 'China', 'MACAU': 'China', 'MACAO': 'China', '澳门': 'China',
-    '🇹🇼': 'China', 'TAIWAN': 'China', '台湾': 'China',
-    '🇯🇵': 'Japan', 'JAPAN': 'Japan', '东京': 'Japan', 'TOKYO': 'Japan', '大阪': 'Japan', 'OSAKA': 'Japan',
-    '🇰🇷': 'South Korea', 'KOREA': 'South Korea', 'SOUTH KOREA': 'South Korea', '首尔': 'South Korea', 'SEOUL': 'South Korea',
-    '🇸🇬': 'Singapore', 'SINGAPORE': 'Singapore', '新加坡': 'Singapore',
-    '🇮🇳': 'India', 'INDIA': 'India', '印度': 'India',
-    '🇦🇺': 'Australia', 'AUSTRALIA': 'Australia', '澳大利亚': 'Australia', '澳洲': 'Australia', 'SYDNEY': 'Australia',
-    '🇿🇦': 'South Africa', 'SOUTH AFRICA': 'South Africa', '南非': 'South Africa', 'JOHANNESBURG': 'South Africa',
 }
 
 XHTTP_INSTALL_SCRIPT_TEMPLATE = r"""

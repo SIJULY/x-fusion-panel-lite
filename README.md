@@ -50,6 +50,24 @@ X-Fusion Panel Lite 是一个面向 **多服务器运维 / VPS 管理 / 节点�
 ## 更新记录
 
 ### 2026-08-27
+- **精简**：全项目死代码与残留清理（A 类），共移除 **429 行与 6 个文件**，不改变任何功能行为。
+- 删除 4 个只剩一行转发 import 的空壳模块：`app/ui/dialogs/ssh_console.py`、`deploy_xhttp.py`、`deploy_snell.py`、`deploy_hysteria.py`（各 3 行）——真正的实现分别在 `services/ssh.py` 与 `services/deployment.py`，全项目零引用。
+- 删除 `app/storage/files.py`（25 行，整个文件）：`safe_save` 与 `FILE_LOCK` 的 JSON 落盘链路，在数据层迁到 SQLite 后已零引用。
+- 删除 `static/x-install.sh`（8.4 KB）：只被自己的注释提到，安装脚本走的是根目录的 `install.sh`。
+- `app/services/server_ops.py` 372 → 165 行：删掉 `silent_refresh_all`（45 行）、`save_server_config`（127 行，与 `server_dialog.py` 里同名函数重复且是旧版）、`get_targets_by_scope`（19 行，`content_router.py` 有自己的实现）。这也顺带断掉了 `server_ops → probe` 与 `server_ops → xui_fetch` 两条导入边。
+- `app/core/config.py` 749 → 717 行：删掉 `MATCH_MAP`（29 行，ECharts 地图名映射，随监控墙一起失去调用方）与 `SYNC_COOLDOWN_SECONDS` / `SYNC_COOLDOWN` 两个配置项。
+- `app/utils/geo.py` 198 → 141 行：删掉 `get_echarts_region_name`、`ECHARTS_REGION_ALIASES`（监控墙残留）与 `auto_prepend_flag`（智能命名已统一走 `fast_resolve_single_server`）。
+- 删除 `generate_converted_link`（`utils/encoding.py`，15 行）：它拼的是给客户端看的 `{域名}/convert?...` 链接，而实际的订阅转换是 `api/subscriptions.py` 在服务端直连 subconverter 容器（`http://subconverter:25500/sub`），界面下发的是 `/get/sub/{target}/{token}` 短链。
+- 删除 `format_uptime`（`utils/formatters.py`，8 行）与 `show_custom_node_info`（`ui/components/server_rows.py`，17 行）：都是监控墙时代的展示函数。
+- 删除 `state.GLOBAL_UI_VERSION` 与 `state.UI_ROW_REFS`：前者在 `save_servers` / `save_admin_config` 里被写入两次却没有任何读者，后者从未被写入。
+- 拆掉 `server_dialog.py` 末尾三个纯转发函数 `render_single_ssh_view` / `render_single_server_view` / `render_aggregated_view`（18 行）：唯一调用方 `content_router.py` 现在直接 import `app.ui.pages.single_ssh` / `single_server` / `aggregated_view`；`cleanup_ssh_route_terminal` 是真实现，保留不动。
+- 清理 12 个未使用的模块级导入（`main.py` 的 `FastAPI` / `CORSMiddleware` / `JSONResponse` / `Response` / `StaticFiles`，5 处 `from nicegui import run`，以及 `repositories.py` 里 5 个 JSON 时代的文件路径常量等）。
+- **Bug 修复**：侧边栏点击「当前正在看的那台机器」永久无效。`state.REFRESH_CURRENT_NODES` 实际存在三份互不相干的副本——`sidebar.py` 用 `from app.core.state import REFRESH_CURRENT_NODES` 在导入时就把值（那个空 lambda）快照下来了，而 `single_server.py` 写的是自己的模块级同名变量和 `server_dialog` 上一个根本不存在的属性。结果是：写入方和读取方永远碰不到面，这个分支只会调用空 lambda 然后 `return`，节点列表不会刷新。现在收敛成一份：`single_server.py` 写 `state.REFRESH_CURRENT_NODES`，`sidebar.py` 在调用时才从 `state` 上取，重复点击同一台机器可以正常触发重新拉取节点。
+- **命名修正**：`show_ping` 改名 `hide_group_column`。三网延迟测速在第一步就随监控墙移除了，这个参数早已与 ping 无关——它真正的作用是把「所在组」列换成「在线状态 / IP」并隐藏状态灯（7 列紧凑布局）。区域视图里每行的所在组都相同，所以只在 `scope == 'COUNTRY'` 时置 True。同步把 `draw_row` 的 `use_special_mode` 参数改成 `compact_mode`，`COLS_NO_PING` / `COLS_SPECIAL_WITH_PING` 改成 `COLS_FULL` / `COLS_COMPACT`，`SINGLE_COLS_NO_PING` 改成 `SINGLE_ROW_COLS`。
+- 顺带修掉 `aggregated_view.py` 里一处必然崩溃的兜底分支：`try` 块外的 `except` 没有给 `use_special_mode` 赋值，一旦进入就会在表头渲染时抛 `NameError`；同时删掉两个从未被使用的重复列宽局部变量 `cols_ping` / `cols_no_ping`。
+- 结果：Python 文件数 66 → 61，`app/` 总行数 15,700 → **15,271**。已通过 `python3 -m compileall` 全量语法检查，以及全项目跨模块 import 解析与未使用导入两项静态检查。
+
+### 2026-08-27
 - **精简**：移除 **X-UI 面板 HTTP API 引擎**，节点读写只保留 SSH 直连远程数据库这一条通道。
 - 删除 `app/services/xui_api.py`（223 行，整个文件）：`XUIManager` 的登录、`get_inbounds`、增删改节点等全部 HTTP API 实现。
 - `app/services/manager_factory.py` 从 120 行压到 37 行：删掉 `HybridManager`（SSH 优先 + API 兜底的双引擎包装层，四个方法结构完全重复），`get_manager()` 现在直接返回 `SSHXUIManager`；条件不满足时抛出明确异常，由调用方降级展示。

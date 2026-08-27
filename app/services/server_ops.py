@@ -1,23 +1,13 @@
 import asyncio
-import time
 
 from nicegui import run
 
-from app.core.config import AUTO_COUNTRY_MAP, SYNC_COOLDOWN_SECONDS
+from app.core.config import AUTO_COUNTRY_MAP
 from app.core.logging import logger
-from app.core.state import (
-    ADMIN_CONFIG,
-    CURRENT_VIEW_STATE,
-    EXPANDED_GROUPS,
-    NODES_DATA,
-    SERVERS_CACHE,
-    SIDEBAR_UI_REFS,
-)
+from app.core.state import SERVERS_CACHE
 from app.services.manager_factory import get_manager
-from app.services.probe import install_probe_on_server
-from app.services.xui_fetch import fetch_inbounds_safe
-from app.storage.repositories import save_admin_config, save_nodes_cache, save_servers, save_single_server
-from app.utils.geo import detect_country_group, fetch_geo_from_ip, get_flag_for_country
+from app.storage.repositories import save_servers
+from app.utils.geo import fetch_geo_from_ip, get_flag_for_country
 
 
 async def force_geoip_naming_task(server_conf, max_retries=10):
@@ -93,53 +83,6 @@ async def generate_smart_name(server_conf):
         pass
 
     return f"Server-{len(SERVERS_CACHE) + 1}"
-
-
-async def silent_refresh_all(is_auto_trigger=False):
-    last_time = ADMIN_CONFIG.get('last_sync_time', 0)
-
-    if is_auto_trigger:
-        current_time = time.time()
-
-        total_nodes = 0
-        try:
-            for nodes in NODES_DATA.values():
-                if isinstance(nodes, list):
-                    total_nodes += len(nodes)
-        except:
-            pass
-
-        if len(SERVERS_CACHE) > 0 and total_nodes == 0:
-            logger.warning(f"⚠️ [防抖穿透] 缓存为空 (节点数0)，强制触发首次修复同步！")
-
-        elif current_time - last_time < SYNC_COOLDOWN_SECONDS:
-            remaining = int(SYNC_COOLDOWN_SECONDS - (current_time - last_time))
-            logger.info(f"⏳ [防抖生效] 距离上次同步不足 {SYNC_COOLDOWN_SECONDS}秒，跳过 (剩余: {remaining}s)")
-            return
-
-    from app.ui.common.notifications import safe_notify
-    from app.ui.components.dashboard import load_dashboard_stats
-    from app.ui.components.sidebar import render_sidebar_content
-
-    safe_notify(f'🚀 开始后台静默刷新 ({len(SERVERS_CACHE)} 个服务器)...')
-
-    ADMIN_CONFIG['last_sync_time'] = time.time()
-    await save_admin_config()
-
-    tasks = []
-    for srv in SERVERS_CACHE:
-        tasks.append(fetch_inbounds_safe(srv, force_refresh=True))
-
-    await asyncio.gather(*tasks, return_exceptions=True)
-
-    await save_nodes_cache()
-
-    safe_notify('✅ 后台刷新完成', 'positive')
-    try:
-        render_sidebar_content.refresh()
-        await load_dashboard_stats()
-    except:
-        pass
 
 
 async def fast_resolve_single_server(s):
@@ -220,153 +163,3 @@ def get_all_groups():
         if g:
             groups.add(g)
     return sorted(list(groups))
-
-
-async def save_server_config(server_data, is_add=True, idx=None):
-    if not server_data.get('name') or not server_data.get('url'):
-        from app.ui.common.notifications import safe_notify
-
-        safe_notify("名称和地址不能为空", "negative")
-        return False
-
-    old_group = None
-    if not is_add and idx is not None and 0 <= idx < len(SERVERS_CACHE):
-        old_group = SERVERS_CACHE[idx].get('group')
-
-    if is_add:
-        for s in SERVERS_CACHE:
-            if s['url'] == server_data['url']:
-                from app.ui.common.notifications import safe_notify
-
-                safe_notify(f"已存在！", "warning")
-                return False
-
-        has_flag = False
-        for v in AUTO_COUNTRY_MAP.values():
-            if v.split(' ')[0] in server_data['name']:
-                has_flag = True
-                break
-        if not has_flag and '🏳️' not in server_data['name']:
-            server_data['name'] = f"🏳️ {server_data['name']}"
-
-        SERVERS_CACHE.append(server_data)
-        from app.ui.common.notifications import safe_notify
-
-        safe_notify(f"已添加: {server_data['name']}", "positive")
-    else:
-        if idx is not None and 0 <= idx < len(SERVERS_CACHE):
-            SERVERS_CACHE[idx].update(server_data)
-            from app.ui.common.notifications import safe_notify
-
-            safe_notify(f"已更新: {server_data['name']}", "positive")
-        else:
-            from app.ui.common.notifications import safe_notify
-
-            safe_notify("目标不存在", "negative")
-            return False
-
-    # 仅修改单行数据时调用单行写入方法，极大提升页面响应速度
-    await save_single_server(server_data)
-
-    new_group = server_data.get('group', '默认分组')
-    if new_group in ['默认分组', '自动注册', '未分组', '自动导入']:
-        try:
-            new_group = detect_country_group(server_data.get('name', ''), server_data)
-        except:
-            pass
-        if not new_group:
-            new_group = '🏳️ 其他地区'
-
-    need_full_refresh = False
-
-    try:
-        from app.ui.components.sidebar import render_sidebar_content, render_single_sidebar_row
-
-        if is_add:
-            if new_group in SIDEBAR_UI_REFS['groups']:
-                with SIDEBAR_UI_REFS['groups'][new_group]:
-                    render_single_sidebar_row(server_data)
-                EXPANDED_GROUPS.add(new_group)
-            else:
-                need_full_refresh = True
-
-        elif old_group != new_group:
-            row_el = SIDEBAR_UI_REFS['rows'].get(server_data['url'])
-            target_col = SIDEBAR_UI_REFS['groups'].get(new_group)
-
-            if row_el and target_col:
-                row_el.move(target_col)
-                EXPANDED_GROUPS.add(new_group)
-            else:
-                need_full_refresh = True
-
-    except Exception as e:
-        logger.error(f"UI Move Error: {e}")
-        need_full_refresh = True
-
-    if need_full_refresh:
-        try:
-            from app.ui.components.sidebar import render_sidebar_content
-
-            render_sidebar_content.refresh()
-        except:
-            pass
-
-    current_scope = CURRENT_VIEW_STATE.get('scope')
-    current_data = CURRENT_VIEW_STATE.get('data')
-
-    if current_scope == 'SINGLE' and (current_data == server_data or (is_add and server_data == SERVERS_CACHE[-1])):
-        try:
-            from app.ui.pages.content_router import refresh_content
-
-            await refresh_content('SINGLE', server_data, force_refresh=True)
-        except:
-            pass
-
-    elif current_scope in ['ALL', 'TAG', 'COUNTRY']:
-        CURRENT_VIEW_STATE['scope'] = None
-        try:
-            from app.ui.pages.content_router import refresh_content
-
-            await refresh_content(current_scope, current_data, force_refresh=True)
-        except:
-            pass
-
-    elif current_scope == 'DASHBOARD':
-        try:
-            from app.ui.components.dashboard import refresh_dashboard_ui
-
-            await refresh_dashboard_ui()
-        except:
-            pass
-
-    asyncio.create_task(fast_resolve_single_server(server_data))
-
-    if ADMIN_CONFIG.get('probe_enabled', False) and server_data.get('probe_installed', False):
-        async def delayed_install():
-            await asyncio.sleep(1)
-            await install_probe_on_server(server_data)
-        asyncio.create_task(delayed_install())
-
-    return True
-
-
-def get_targets_by_scope(scope, data):
-    targets = []
-    try:
-        if scope == 'ALL':
-            targets = list(SERVERS_CACHE)
-        elif scope == 'TAG':
-            targets = [s for s in SERVERS_CACHE if data in s.get('tags', [])]
-        elif scope == 'COUNTRY':
-            for s in SERVERS_CACHE:
-                saved = s.get('group')
-                real = saved if saved and saved not in ['默认分组', '自动注册', '未分组', '自动导入', '🏳️ 其他地区'] else detect_country_group(s.get('name', ''))
-                if real == data:
-                    targets.append(s)
-        elif scope == 'SINGLE':
-            if data in SERVERS_CACHE:
-                targets = [data]
-    except:
-        pass
-    return targets

@@ -6,7 +6,6 @@ from nicegui import app, run, ui
 from app.core.config import AUTO_COUNTRY_MAP
 from app.core.logging import logger
 from app.core.state import (
-    ADMIN_CONFIG,
     CURRENT_VIEW_STATE,
     EXPANDED_GROUPS,
     NODES_DATA,
@@ -24,9 +23,7 @@ from app.ui.components.sidebar import render_sidebar_content, render_single_side
 from app.utils.geo import detect_country_group
 
 
-COLS_NO_PING = 'grid-template-columns: 2fr 2fr 1.5fr 1fr 0.8fr 0.8fr 0.5fr 1.5fr; align-items: center;'
-COLS_SPECIAL_WITH_PING = 'grid-template-columns: 2fr 2fr 1.5fr 1fr 0.8fr 0.8fr 1.5fr; align-items: center;'
-SINGLE_COLS_NO_PING = 'grid-template-columns: minmax(0, 3fr) minmax(0, 1fr) minmax(0, 1.5fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) 140px; align-items: center;'
+SINGLE_ROW_COLS = 'grid-template-columns: minmax(0, 3fr) minmax(0, 1fr) minmax(0, 1.5fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) 140px; align-items: center;'
 XHTTP_UNINSTALL_SCRIPT = r"""
 #!/bin/bash
 systemctl stop xray
@@ -443,21 +440,3 @@ def cleanup_ssh_route_terminal(server_key=None):
                 inst.close()
         except:
             pass
-
-
-async def render_single_ssh_view(server_conf):
-    from app.ui.pages.single_ssh import render_single_ssh_view as _impl
-
-    return await _impl(server_conf)
-
-
-async def render_single_server_view(server_conf, force_refresh=False):
-    from app.ui.pages.single_server import render_single_server_view as _impl
-
-    return await _impl(server_conf, force_refresh=force_refresh)
-
-
-async def render_aggregated_view(server_list, show_ping=False, token=None, initial_page=1):
-    from app.ui.pages.aggregated_view import render_aggregated_view as _impl
-
-    return await _impl(server_list, show_ping=show_ping, token=token, initial_page=initial_page)

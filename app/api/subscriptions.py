@@ -3,7 +3,6 @@ from urllib.parse import urlparse
 import httpx
 from fastapi import Request
 from fastapi.responses import Response
-from nicegui import run
 
 from app.core.config import AUTO_COUNTRY_MAP
 from app.core.logging import logger

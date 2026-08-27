@@ -1,5 +1,4 @@
 import httpx
-from nicegui import run
 
 from app.core.logging import logger
 from app.core.state import ADMIN_CONFIG

@@ -1,7 +1,6 @@
 import asyncio
-import socket
 
-from nicegui import app, run, ui
+from nicegui import app, ui
 
 from app.core.state import SERVERS_CACHE
 from app.services.ssh import _ssh_exec_wrapper

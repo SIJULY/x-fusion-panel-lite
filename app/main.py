@@ -7,10 +7,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 STATIC_DIR = PROJECT_ROOT / 'static'
 
-from fastapi import FastAPI, Request
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response
-from fastapi.staticfiles import StaticFiles
+from fastapi import Request
 from nicegui import app, ui
 
 

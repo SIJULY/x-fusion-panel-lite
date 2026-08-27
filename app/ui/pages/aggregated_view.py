@@ -6,11 +6,11 @@ from app.core.state import CURRENT_VIEW_STATE, NODES_DATA, SERVERS_CACHE
 from app.ui.components.server_rows import draw_row
 
 
-COLS_NO_PING = 'grid-template-columns: 2fr 2fr 1.5fr 1fr 0.8fr 0.8fr 0.5fr 1.5fr; align-items: center;'
-COLS_SPECIAL_WITH_PING = 'grid-template-columns: 2fr 2fr 1.5fr 1fr 0.8fr 0.8fr 1.5fr; align-items: center;'
+COLS_FULL = 'grid-template-columns: 2fr 2fr 1.5fr 1fr 0.8fr 0.8fr 0.5fr 1.5fr; align-items: center;'
+COLS_COMPACT = 'grid-template-columns: 2fr 2fr 1.5fr 1fr 0.8fr 0.8fr 1.5fr; align-items: center;'
 
 
-async def render_aggregated_view(server_list, show_ping=False, token=None, initial_page=1):
+async def render_aggregated_view(server_list, hide_group_column=False, initial_page=1):
 
     is_dark = bool(app.storage.user.get('is_dark', True))
     summary_cls = 'text-xs font-black tracking-wide'
@@ -23,15 +23,12 @@ async def render_aggregated_view(server_list, show_ping=False, token=None, initi
     parent_client = ui.context.client
     list_container = ui.column().classes('w-full max-w-[1440px] mx-auto gap-3 p-1')
 
-    cols_ping = 'grid-template-columns: 2fr 2fr 1.5fr 1.5fr 1fr 1fr 1.5fr'
-    cols_no_ping = 'grid-template-columns: 2fr 2fr 1.5fr 1.5fr 1fr 1fr 0.5fr 1.5fr'
-
     try:
-        is_all_servers = (len(server_list) == len(SERVERS_CACHE) and not show_ping)
-        use_special_mode = is_all_servers or show_ping
-        current_css = COLS_SPECIAL_WITH_PING if use_special_mode else COLS_NO_PING
+        is_all_servers = (len(server_list) == len(SERVERS_CACHE) and not hide_group_column)
+        compact_mode = is_all_servers or hide_group_column
     except:
-        current_css = cols_ping if show_ping else cols_no_ping
+        compact_mode = bool(hide_group_column)
+    current_css = COLS_COMPACT if compact_mode else COLS_FULL
 
     PAGE_SIZE = 30
     total_items = len(server_list)
@@ -54,14 +51,14 @@ async def render_aggregated_view(server_list, show_ping=False, token=None, initi
             with ui.element('div').classes(head_row_cls).style(f'{current_css} {head_row_style}'):
                 ui.label('服务器').classes('text-left pl-1')
                 ui.label('节点名称').classes('text-left pl-1')
-                if use_special_mode:
+                if compact_mode:
                     ui.label('在线状态 / IP').classes('text-center')
                 else:
                     ui.label('所在组').classes('text-center')
                 ui.label('已用流量').classes('text-center')
                 ui.label('协议').classes('text-center')
                 ui.label('端口').classes('text-center')
-                if not use_special_mode:
+                if not compact_mode:
                     ui.label('状态').classes('text-center')
                 ui.label('操作').classes('text-center')
 
@@ -77,11 +74,11 @@ async def render_aggregated_view(server_list, show_ping=False, token=None, initi
                 all_nodes = panel_n + custom_n
 
                 if not all_nodes:
-                    draw_row(srv, None, current_css, use_special_mode, is_first=True)
+                    draw_row(srv, None, current_css, compact_mode, is_first=True)
                     continue
 
                 for index, node in enumerate(all_nodes):
-                    draw_row(srv, node, current_css, use_special_mode, is_first=(index == 0))
+                    draw_row(srv, node, current_css, compact_mode, is_first=(index == 0))
 
             if total_pages > 1:
                 with ui.row().classes('w-full justify-center mt-4'):

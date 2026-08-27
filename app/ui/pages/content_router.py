@@ -167,7 +167,7 @@ async def _render_ui_internal(scope, data, page_num, force_refresh, sync_name_ac
 
             if scope == 'SSH_SINGLE':
                 if targets:
-                    from app.ui.dialogs.server_dialog import render_single_ssh_view
+                    from app.ui.pages.single_ssh import render_single_ssh_view
 
                     logger.info(f"[ContentRouter] _render_ui_internal branch=SSH_SINGLE found target | url={targets[0].get('url')}")
                     await render_single_ssh_view(targets[0])
@@ -181,7 +181,7 @@ async def _render_ui_internal(scope, data, page_num, force_refresh, sync_name_ac
 
             if scope == 'SINGLE':
                 if targets:
-                    from app.ui.dialogs.server_dialog import render_single_server_view
+                    from app.ui.pages.single_server import render_single_server_view
 
                     logger.info(f"[ContentRouter] _render_ui_internal branch=SINGLE found target | url={targets[0].get('url')}")
                     await render_single_server_view(targets[0])
@@ -193,7 +193,7 @@ async def _render_ui_internal(scope, data, page_num, force_refresh, sync_name_ac
 
             title = ""
             is_group_view = False
-            show_ping = False
+            hide_group_column = False
             if scope == 'ALL':
                 title = f"🌍 所有服务器 ({len(targets)})"
             elif scope == 'TAG':
@@ -202,7 +202,8 @@ async def _render_ui_internal(scope, data, page_num, force_refresh, sync_name_ac
             elif scope == 'COUNTRY':
                 title = f"🏳️ 区域: {data} ({len(targets)})"
                 is_group_view = True
-                show_ping = True
+                # 区域视图里每一行的「所在组」都相同，换成「在线状态 / IP」更有信息量
+                hide_group_column = True
 
             logger.info(f"[ContentRouter] _render_ui_internal branch={scope} title={title}")
             search_state = {'keyword': ''}
@@ -244,10 +245,10 @@ async def _render_ui_internal(scope, data, page_num, force_refresh, sync_name_ac
                 except:
                     pass
 
-                from app.ui.dialogs.server_dialog import render_aggregated_view
+                from app.ui.pages.aggregated_view import render_aggregated_view
 
-                logger.info(f"[ContentRouter] _render_ui_internal render_aggregated_view | scope={scope} data={data} filtered_targets={len(filtered_targets)} show_ping={show_ping} keyword={keyword}")
-                await render_aggregated_view(filtered_targets, show_ping=show_ping, token=None, initial_page=(1 if keyword else page_num))
+                logger.info(f"[ContentRouter] _render_ui_internal render_aggregated_view | scope={scope} data={data} filtered_targets={len(filtered_targets)} hide_group_column={hide_group_column} keyword={keyword}")
+                await render_aggregated_view(filtered_targets, hide_group_column=hide_group_column, initial_page=(1 if keyword else page_num))
 
             await render_target_list()
     else:

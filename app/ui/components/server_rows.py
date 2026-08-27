@@ -30,25 +30,6 @@ def bind_ip_label(url, label):
         pass
 
 
-def show_custom_node_info(node):
-    is_dark = bool(app.storage.user.get('is_dark', True))
-    with ui.dialog() as d, ui.card().classes('w-full max-w-sm p-0 overflow-hidden rounded-sm bg-[#070b14] border border-[#1e3a5f]/55 shadow-[0_18px_48px_rgba(0,0,0,0.78)]' if is_dark else 'w-full max-w-sm p-0 overflow-hidden rounded-sm bg-white border border-slate-300/90 shadow-[0_10px_28px_rgba(148,163,184,0.18)]'):
-        with ui.row().classes('w-full justify-between items-center p-4 border-b border-[#1e3a5f]/60 bg-gradient-to-r from-[#0a1526] to-[#050a14]' if is_dark else 'w-full justify-between items-center p-4 border-b border-slate-300/90 bg-gradient-to-r from-[#f8fbff] to-[#eaf2ff]'):
-            ui.label(node.get('remark', '节点详情')).classes('text-lg font-black text-slate-100 tracking-wide' if is_dark else 'text-lg font-black text-slate-800 tracking-wide')
-            ui.button(icon='close', on_click=d.close).props('flat round dense').classes('text-slate-400 hover:text-cyan-300 hover:bg-cyan-950/30' if is_dark else 'text-slate-500 hover:text-sky-700 hover:bg-sky-100')
-
-        link = node.get('_raw_link') or node.get('link') or "无法获取链接"
-
-        with ui.column().classes('w-full p-4 gap-4 bg-[#030712]' if is_dark else 'w-full p-4 gap-4 bg-[#f8fbff]'):
-            with ui.row().classes('w-full bg-black p-3 rounded-sm break-all font-mono text-xs border border-[#1e3a5f]/45 text-emerald-400' if is_dark else 'w-full bg-sky-50 p-3 rounded-sm break-all font-mono text-xs border border-slate-300/90 text-slate-700'):
-                ui.label(link)
-
-            with ui.row().classes('w-full justify-end gap-2'):
-                ui.button('复制', icon='content_copy', on_click=lambda: [safe_copy_to_clipboard(link), d.close()]).props('flat').classes('bg-cyan-950/45 text-cyan-300 border border-cyan-500/45 hover:bg-cyan-900/55 font-black rounded-sm px-4' if is_dark else 'bg-sky-100 text-sky-700 border border-sky-300 hover:bg-sky-200 font-black rounded-sm px-4')
-                ui.button('关闭', on_click=d.close).props('outline color=grey').classes('text-slate-300 border-slate-600 hover:bg-slate-800/40 text-xs font-bold tracking-wide rounded-sm' if is_dark else 'text-slate-600 border-slate-300 hover:bg-slate-100 text-xs font-bold tracking-wide rounded-sm')
-    d.open()
-
-
 def _apply_tooltip(target, text, is_dark):
     tip = target.tooltip(text)
     tip.classes('text-[11px] font-bold px-2 py-1 rounded-sm')
@@ -56,7 +37,7 @@ def _apply_tooltip(target, text, is_dark):
     return tip
 
 
-def draw_row(srv, node, css_style, use_special_mode, is_first=True):
+def draw_row(srv, node, css_style, compact_mode, is_first=True):
     parent_client = None
     try:
         parent_client = ui.context.client
@@ -82,7 +63,7 @@ def draw_row(srv, node, css_style, use_special_mode, is_first=True):
             ui.label('--').classes('text-center').style('color: var(--xf-text-muted);')
             ui.label('UNK').classes('text-center font-black text-[10px]').style('color: var(--xf-text-muted);')
             ui.label('--').classes('text-center').style('color: var(--xf-text-muted);')
-            if not use_special_mode:
+            if not compact_mode:
                 ui.element('div')
             with ui.row().classes('gap-1 justify-center w-full no-wrap'):
                 ssh_btn = ui.button(icon='terminal', on_click=lambda _, s=srv, c=parent_client: asyncio.create_task(_open_single_ssh(s, c))).props('flat dense size=sm round').classes('text-slate-500').style('color: var(--xf-text-muted);')
@@ -94,7 +75,7 @@ def draw_row(srv, node, css_style, use_special_mode, is_first=True):
         remark = node.get('ps') or node.get('remark') or '未命名节点'
         ui.label(remark).classes('font-black truncate w-full text-left pl-2 text-sm').style('color: var(--xf-text-strong);')
 
-        if use_special_mode:
+        if compact_mode:
             with ui.row().classes('w-full justify-center items-center gap-1.5 no-wrap'):
                 is_online = srv.get('_status') == 'online'
                 color = 'text-green-500' if is_online else 'text-red-500'
@@ -140,7 +121,7 @@ def draw_row(srv, node, css_style, use_special_mode, is_first=True):
         port_val = str(node.get('port', 0))
         ui.label(port_val).classes('font-mono w-full text-center font-black text-xs').style('color: var(--xf-text-muted);')
 
-        if not use_special_mode:
+        if not compact_mode:
             with ui.element('div').classes('flex justify-center w-full'):
                 is_enable = node.get('enable', True)
                 dot_cls = "bg-green-500 shadow-[0_0_6px_rgba(34,197,94,0.6)]" if is_enable else "bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.6)]"

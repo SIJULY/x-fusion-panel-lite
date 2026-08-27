@@ -6,11 +6,11 @@ from nicegui import app, ui
 
 from app.core.logging import logger
 
+from app.core import state
 from app.core.state import (
     ADMIN_CONFIG,
     CURRENT_VIEW_STATE,
     EXPANDED_GROUPS,
-    REFRESH_CURRENT_NODES,
     SERVERS_CACHE,
     SIDEBAR_UI_REFS,
 )
@@ -121,8 +121,9 @@ async def on_server_click_handler(server):
             pass
 
     if is_same_server:
-        if REFRESH_CURRENT_NODES:
-            res = REFRESH_CURRENT_NODES()
+        refresher = state.REFRESH_CURRENT_NODES
+        if refresher:
+            res = refresher()
             if res and asyncio.iscoroutine(res):
                 await res
         return

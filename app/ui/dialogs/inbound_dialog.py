@@ -4,7 +4,7 @@ import random
 import uuid
 from datetime import datetime
 
-from nicegui import app, run, ui
+from nicegui import app, ui
 
 from app.ui.common.notifications import safe_notify
 
