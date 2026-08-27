@@ -144,8 +144,22 @@ def render_single_sidebar_row(s):
         await _open_server_dialog_by_server(s, ui.context.client)
 
     with ui.row().classes('w-full gap-2 no-wrap items-stretch') as row:
-        ui.button(on_click=lambda _, s=s: on_server_click_handler(s)) \
-            .bind_text_from(s, 'name') \
+        # 这里刻意**不用** bind_text_from(s, 'name')。
+        #
+        # s 是普通 dict，dict 改了没法通知谁，所以 NiceGUI 只能靠轮询发现——它每
+        # 0.1 秒把全部 active_links 扫一遍。而 active_links = 服务器数 × 客户端数，
+        # 且客户端断开后要等 reconnect_timeout（本项目 600 秒）才销毁，刷几次页面
+        # 就攒出一堆僵尸客户端。软路由的 ARM CPU 扫 300 条要 14ms，超过 NiceGUI 的
+        # MAX_PROPAGATION_TIME（10ms），于是每个周期都刷一条
+        # "binding propagation for N active links took ..." 警告：CPU 白烧，日志还
+        # 每秒写 10 行，在路由器的闪存上不是小事。
+        #
+        # 而这条绑定本来就是多余的：19 处能改服务器名的路径全都调了
+        # render_sidebar_content.refresh()，refresh 会重建所有已连接客户端的侧边栏，
+        # 整行连名字一起重新生成。弹窗里那些 bind_visibility_from 不受影响——源是
+        # 元素属性（BindableProperty），赋值时即时传播，不靠这个轮询。
+        ui.button(str(s.get('name') or '未命名'),
+                  on_click=lambda _, s=s: on_server_click_handler(s)) \
             .props('no-caps align=left flat') \
             .classes(btn_name_cls) \
             .style(

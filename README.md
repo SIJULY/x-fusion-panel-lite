@@ -49,6 +49,30 @@ X-Fusion Panel Lite 是一个面向 **多服务器运维 / VPS 管理 / 节点�
 
 ## 更新记录
 
+### 2026-08-27（修掉软路由上刷屏的 binding 警告）
+
+软路由上部署 + 恢复数据后，容器日志每秒刷 10 行：
+
+```
+WARNING | binding propagation for 300 active links took 0.014 s
+```
+
+不是报错，是 NiceGUI 的性能警告，但在路由器上是个真问题：CPU 白烧，且日志每秒写 10 行会磨闪存。
+
+**根因**：侧边栏每台服务器有一条 `bind_text_from(s, 'name')`。`s` 是普通 dict，dict 改了没法通知谁，所以 NiceGUI 只能**轮询**——每 0.1 秒把全部 `active_links` 扫一遍。而
+
+```
+active_links = 服务器数 × (在线客户端 + 最近 10 分钟断开但还没销毁的客户端)
+```
+
+客户端断开后要等 `reconnect_timeout`（本项目设的 600 秒）才销毁绑定，所以刷几次页面、隧道重连几次就攒出一堆僵尸客户端，条数翻倍地涨。软路由的 ARM CPU 扫 300 条要 14ms，超过 NiceGUI 的 `MAX_PROPAGATION_TIME`（10ms），于是**每个周期都报一条**。
+
+**修法**：这条绑定本来就是多余的——19 处能改服务器名的路径全都调了 `render_sidebar_content.refresh()`，而 refresh 会重建**所有已连接客户端**的侧边栏，整行连名字一起重新生成。改成渲染时直接取值，`active_links` 稳态归零，警告和那 14% 的空转 CPU 一起消失。
+
+弹窗里那些 `bind_visibility_from`（选「独立密码」才显示密码框之类）**不受影响**：它们的源是元素属性（`BindableProperty`），赋值时即时 `_propagate()`，从来不靠这个轮询——轮询只服务于「源是普通 dict」的绑定，而全项目只有侧边栏这一处。
+
+**验证**：10 / 100 / 300 台服务器渲染侧边栏后 `active_links` 全为 0（原来是 10 / 100 / 300）；3 个客户端 × 300 台仍为 0（原来 900）；服务器名照常显示；改名 + refresh 后名字仍然更新，其它行不受影响。
+
 ### 2026-08-27（订阅管理 UI 重构：节点在上、订阅在下）
 
 参考 sub-store 的信息层级重排订阅管理页，**功能一个没删、没改**，纯 UI 层重构（只动 `app/ui/pages/subs_page.py` 一个文件）。
