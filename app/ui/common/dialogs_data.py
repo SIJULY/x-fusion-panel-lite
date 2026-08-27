@@ -28,6 +28,7 @@ def _data_theme():
         'selector_bar': 'w-full justify-between items-center bg-[#050b14] p-2 rounded-sm border border-[#1e3a5f]/45' if is_dark else 'w-full justify-between items-center bg-sky-50 p-2 rounded-sm border border-slate-300/90',
     }
 
+from app.core.logging import logger
 from app.core.state import ADMIN_CONFIG, NODES_DATA, SERVERS_CACHE, SUBS_CACHE
 from app.services.probe import install_probe_on_server
 from app.services.server_ops import fast_resolve_single_server
@@ -39,6 +40,28 @@ from app.storage.repositories import (
     save_subs,
 )
 from app.ui.common.notifications import safe_copy_to_clipboard, safe_notify
+
+# 本版本实际会读取的 admin_config 键（与全项目里的 ADMIN_CONFIG.get / [] 一一对应）。
+# 完整版的备份里会带着精简过程中删掉的功能留下的键——github_* 云备份与 OAuth、
+# probe_custom_groups 探针分组、sync_job_* 与 last_sync_time 同步进度等——恢复时
+# 按这份白名单过滤，免得 admin_config.json 里堆满谁也不认的字段。
+# 用白名单而不是黑名单：这样以后不管还删掉什么功能，旧备份里的残留键都自动被挡掉。
+# 新增设置项时记得同步加进来，否则该项无法通过备份恢复。
+_LIVE_CONFIG_KEYS = {
+    'admin_username', 'admin_password', 'mfa_secret', 'setup_completed', 'session_version',
+    'manager_base_url', 'probe_enabled', 'probe_token',
+    'pref_ssh_user', 'pref_ssh_port', 'quick_commands',
+    'custom_groups', 'group_order',
+    'tg_bot_token', 'tg_chat_id',
+    'cf_email', 'cf_api_token', 'cf_root_domain',
+}
+
+# 这三个键标识「本面板自己」，跨面板导入时必须保留本地值，否则两台面板会串台：
+#   manager_base_url —— 探针上报数据的目标地址。装探针时会烧进 VPS 上的
+#       /root/x_fusion_agent.py，导入旧面板的地址会让本面板新装的探针继续报给旧面板。
+#   probe_token      —— 本面板校验探针推送用的密钥，首次启动时随机生成，两台面板必然不同。
+#   session_version  —— 用来作废旧登录态，导入别的面板的值会影响当前会话。
+_PANEL_IDENTITY_KEYS = {'manager_base_url', 'probe_token', 'session_version'}
 
 
 async def open_global_settings_dialog():
@@ -103,21 +126,36 @@ async def open_data_mgmt_dialog():
                             restore_key_chk = ui.checkbox('恢复 SSH 密钥', value=True).props('dense dark color=blue' if theme['is_dark'] else 'dense color=blue')
                             restore_sub_chk = ui.checkbox('恢复订阅设置', value=True).props('dense dark color=blue' if theme['is_dark'] else 'dense color=blue')
 
+                        ui.label(
+                            '可直接粘贴完整版的备份：已删功能留下的配置项会自动忽略；'
+                            '本面板地址（manager_base_url）与探针密钥始终保留本地值，不会被旧面板覆盖。'
+                            '若备份来自另一台面板，恢复后需在本面板重装一次探针才会把上报切过来。'
+                        ).classes('text-xs leading-relaxed text-slate-500')
+
                         async def process_import():
                             try:
                                 raw = import_text.value.strip()
                                 data = json.loads(raw)
-                                new_servers = data.get('servers', []) if isinstance(data, dict) else data
-                                new_subs = data.get('subscriptions', [])
-                                new_config = data.get('admin_config', {})
-                                new_ssh_key = data.get('global_ssh_key', '')
-                                new_cache = data.get('cache', {})
+                                # 老格式允许直接是一个服务器数组，统一包成 dict 便于后面取字段
+                                if not isinstance(data, dict):
+                                    data = {'servers': data}
+                                new_servers = data.get('servers') or []
+                                if not isinstance(new_servers, list):
+                                    safe_notify('备份格式不对：servers 不是列表', 'negative')
+                                    return
 
                                 added = 0
                                 updated = 0
+                                skipped = 0
                                 existing_map = {s['url']: i for i, s in enumerate(SERVERS_CACHE)}
                                 for item in new_servers:
-                                    url = item.get('url')
+                                    # url 是服务器主键：探针上报、节点缓存、管理器实例全靠它定位。
+                                    # 没有 url 的条目直接跳过，否则会往缓存里塞一条永远连不上的
+                                    # 空壳记录，还会让侧边栏和仪表盘统计跟着一起错。
+                                    if not isinstance(item, dict) or not item.get('url'):
+                                        skipped += 1
+                                        continue
+                                    url = item['url']
                                     if url in existing_map:
                                         if overwrite_chk.value:
                                             SERVERS_CACHE[existing_map[url]] = item
@@ -129,12 +167,21 @@ async def open_data_mgmt_dialog():
 
                                 if restore_key_chk.value and data.get('global_ssh_key'):
                                     await save_global_key(data['global_ssh_key'])
-                                if restore_sub_chk.value and isinstance(data, dict):
+
+                                dropped_keys = []
+                                if restore_sub_chk.value:
                                     if isinstance(data.get('subscriptions'), list):
                                         SUBS_CACHE.clear()
                                         SUBS_CACHE.extend(data['subscriptions'])
-                                    if data.get('admin_config'):
-                                        ADMIN_CONFIG.update(data['admin_config'])
+                                    incoming_cfg = data.get('admin_config')
+                                    if isinstance(incoming_cfg, dict):
+                                        clean_cfg = {}
+                                        for k, v in incoming_cfg.items():
+                                            if k in _PANEL_IDENTITY_KEYS or k not in _LIVE_CONFIG_KEYS:
+                                                dropped_keys.append(k)
+                                            else:
+                                                clean_cfg[k] = v
+                                        ADMIN_CONFIG.update(clean_cfg)
 
                                 await save_servers()
                                 await save_subs()
@@ -142,7 +189,28 @@ async def open_data_mgmt_dialog():
                                 from app.ui.components.sidebar import render_sidebar_content
 
                                 render_sidebar_content.refresh()
-                                safe_notify(f"恢复: +{added} / ~{updated}", 'positive')
+
+                                msg = f"恢复: +{added} / ~{updated}"
+                                if skipped:
+                                    msg += f"，跳过 {skipped} 条无 url 的记录"
+                                if dropped_keys:
+                                    msg += f"，忽略 {len(dropped_keys)} 个本版本不使用的配置项"
+                                    logger.info(f"[Restore] 已忽略的 admin_config 键: {sorted(set(dropped_keys))}")
+                                safe_notify(msg, 'positive')
+
+                                # 跨面板导入时最容易踩的坑：备份来自另一台面板，那些机器上的
+                                # 探针地址烧在 /root/x_fusion_agent.py 里，仍然只上报给旧面板，
+                                # 本面板会一直显示「探针离线 (超时)」。这里明确提示一次。
+                                old_base = str((data.get('admin_config') or {}).get('manager_base_url') or '')
+                                cur_base = str(ADMIN_CONFIG.get('manager_base_url') or '')
+                                if old_base and old_base.rstrip('/') != cur_base.rstrip('/'):
+                                    safe_notify(
+                                        f'备份来自另一台面板（{old_base}），已保留本面板地址'
+                                        f'（{cur_base or "未设置"}）。这些机器上的探针目前仍上报给旧面板，'
+                                        f'本面板会显示「探针离线」；要让本面板接管需在此重装一次探针，'
+                                        f'重装只覆盖 agent，不影响 xray / x-ui 等代理服务。',
+                                        'warning', timeout=20000,
+                                    )
                                 d.close()
                             except Exception as e:
                                 safe_notify(f"错误: {e}", 'negative')

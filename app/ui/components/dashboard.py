@@ -375,7 +375,8 @@ async def load_dashboard_stats():
         ui.run_javascript("""
         if (window.dashInterval) clearInterval(window.dashInterval);
 
-        // 拉一次数据并把结果画到卡片和柱状图上。成功返回 true，网络层失败返回 false。
+        // 拉一次数据刷新统计卡片和柱状图，同时给两张图 resize 一次（修空白图，见下）。
+        // 成功返回 true，网络层失败返回 false。
         window.dashFetchOnce = async function() {
             let res;
             try {
@@ -397,15 +398,32 @@ async def load_dashboard_stats():
                     if (el) el.innerText = data[keys[i]];
                 });
 
+                // ui.echart 画在 canvas 上，echarts 初始化时会量一次容器宽高。点侧边栏切
+                // 到仪表盘属于「重建 content_container」，元素挂载那一刻外层 flex 行的宽度
+                // 有可能还没算出来，量到 0 就按 0x0 建画布，结果就是一个空白方块——而且
+                // echarts 自己不会再量第二次。所以这里每轮都先 resize() 重新量一次容器，
+                // 量到了就立刻把图补画出来。整页刷新时图表属于首屏渲染、布局早已确定，
+                // 所以刷新一下就正常，这也是它看起来「时好时坏」的原因。
                 const barDom = document.getElementById('chart-bar');
                 if (barDom) {
                     const chart = echarts.getInstanceByDom(barDom);
                     if (chart) {
+                        chart.resize();
                         chart.setOption({
                             xAxis: { data: data.bar_chart.names },
                             series: [{ data: data.bar_chart.values }]
                         });
                     }
+                }
+
+                // 饼图只 resize、不喂数据：它的初始数据是 load_dashboard_stats 里按
+                // group_buckets 单独算的 pie_data_final，和接口返回的 data.pie_chart
+                // 标签格式不一样（接口那份会带上台数，如「🇺🇸 美国 (2)」），喂进去
+                // 反而会让图例在 3 秒后突然变样。分组数量本来也不会自己变。
+                const pieDom = document.getElementById('chart-pie');
+                if (pieDom) {
+                    const chart = echarts.getInstanceByDom(pieDom);
+                    if (chart) chart.resize();
                 }
             } catch (e) {}
             return true;
@@ -584,4 +602,12 @@ async def load_dashboard_stats():
                 ui.html(build_globe_structure(is_dark), sanitize=False).classes('w-full h-[650px] overflow-hidden')
                 ui.run_javascript(f'window.DASHBOARD_DATA = {json_data};')
                 ui.run_javascript(build_globe_js_logic(is_dark))
-                ui.run_javascript('setTimeout(() => { if(window.applyDashboardTheme) window.applyDashboardTheme(); }, 60)')
+                # 图表和地图都建好了，60ms 后主题和数据各补一次。dashFetchOnce 里带
+                # resize()，是空白图表的第一道补救（不用等满 3 秒轮询）；万一这时候
+                # 布局还没稳，3 秒后的轮询每轮还会再 resize 一次，最终一定能画出来。
+                ui.run_javascript(
+                    'setTimeout(() => {'
+                    ' if (window.applyDashboardTheme) window.applyDashboardTheme();'
+                    ' if (window.dashFetchOnce) window.dashFetchOnce();'
+                    '}, 60)'
+                )

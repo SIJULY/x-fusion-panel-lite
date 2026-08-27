@@ -50,6 +50,11 @@ X-Fusion Panel Lite 是一个面向 **多服务器运维 / VPS 管理 / 节点�
 ## 更新记录
 
 ### 2026-08-27
+- **Bug 修复**：仪表盘的「📊 服务器流量排行」和「🌏 服务器分布」偶发空白，刷新一下网页又正常。这两张图是 `ui.echart`（canvas），echarts 初始化时会量一次容器宽高；点侧边栏切到仪表盘属于重建 `content_container`，元素挂载那一刻外层 `flex-wrap xl:flex-nowrap` 那行的宽度可能还没算出来，量到 0 就按 0×0 建画布，画出来就是个空白方块——而且 echarts 不会自己再量第二次，所以白了就一直白着。整页刷新时图表属于首屏渲染、布局早已确定，因此刷新就好，这也是它看起来「时好时坏」的原因。同一个坑世界地图那边早就用 `ResizeObserver` 修过（`dashboard.py` 里 `myChart.resize()`），但这两张 `ui.echart` 一直没有同样的保护。现在 3 秒一轮的轮询每次都先 `chart.resize()` 重新量一次容器再画，图表变成自愈的，顺带也能跟着窗口缩放与侧边栏折叠正确重排；另外建完图 60ms 就立刻补拉一次，不用干等满 3 秒。饼图只 `resize()` 不喂接口数据——它的初始数据是 `load_dashboard_stats()` 里按 `group_buckets` 单独算的，和接口 `pie_chart` 的标签格式不一样（接口那份带台数，如 `🇺🇸 美国 (2)`），喂进去会让图例在 3 秒后突然变样。
+- **数据恢复**：「数据备份 / 恢复」现在能安全地吃下完整版或另一台面板的备份。原来 `ADMIN_CONFIG.update(data['admin_config'])` 是整份合并，会把精简过程中删掉的功能留下的键（`github_*` 云备份与 OAuth、`probe_custom_groups`、`sync_job_*`、`last_sync_time` 等）一起堆进 `data/admin_config.json`，更要紧的是会把**旧面板的 `manager_base_url` 和 `probe_token` 覆盖到本面板上**——前者是探针上报的目标地址，装探针时会烧进 VPS 上的 `/root/x_fusion_agent.py`，导入旧值会让本面板新装的探针继续报给旧面板。现在按白名单过滤（用白名单而非黑名单：以后不管还删掉什么功能，旧备份里的残留键都自动被挡掉），并把 `manager_base_url`、`probe_token`、`session_version` 三个「本面板身份」键排除在导入之外；恢复完成后如果检测到备份来自另一台面板，会明确提示探针仍上报给旧面板、需要在本面板重装才会切过来。同时给服务器条目补了脏数据保护：`url` 是服务器主键（探针上报、节点缓存、管理器实例全靠它定位），没有 `url` 或不是字典的条目直接跳过并计数，不再往缓存里塞永远连不上的空壳记录。顺带清掉该函数里 4 个赋值后从未使用的局部变量（`new_subs` / `new_config` / `new_ssh_key` / `new_cache`）。
+- **文档**：FAQ 新增第 10 条，说明「两台面板管同一批机器」的边界——探针是单个固定名字的 systemd 服务（`x-fusion-agent`），只能上报给一台面板；重装探针只覆盖 agent，不影响 xray / x-ui / hysteria / snell，断的只是原面板的监控数据；部署在软路由等内网设备上时 `manager_base_url` 必须填 VPS 能访问到的地址。
+
+### 2026-08-27
 - **安全**：日志不再写入 SSH 凭据。`server` 字典里存着 `ssh_password` 和 `ssh_key`（完整私钥），而 `state.CURRENT_VIEW_STATE['data']` 指向的又是同一个字典——`content_router.py` 与 `sidebar.py` 里 15 处 `f"...data={data}"` / `f"...={CURRENT_VIEW_STATE}"` 会把它整个插进日志，点一台服务器就写好几遍。容器日志既不加密也常被随手贴出来排查问题，等于把私钥摊开放。现在 `core/logging.py` 新增 `scrub()`，按字典形状自动脱敏：server 字典压成 `名称@url`（定位够用），带 `data` 字段的 `CURRENT_VIEW_STATE` 递归处理，分组名和 `None` 原样返回；调用方不用判断传进来的是哪种。另外 `main_page.py` 的 `target_data=` 和 `probe.py` 里「密钥错误」把提交上来的 secret 明文打出来这两处，一并修掉。
 - **日志**：27 处 `[ContentRouter]` `[Dashboard]` `[Sidebar]` `[SidebarClick]` `[SaveServerDialog]` `[MainPage]` `[SingleSSHRoute]` 开头的调用链追踪日志从 `logger.info` 降为 `logger.debug`。这些是之前排查「点了没反应 / 视图没刷新」时加的探针，功能验证完就只剩噪音——切一次视图能刷十几行。**需要时把 `app/core/logging.py` 里的 `level=logging.INFO` 改成 `logging.DEBUG` 重启容器即可全部放出来**，该文件里也写了这条注释。真正的运营事件（`🚀 系统正在初始化`、`✅ UI 已就绪`、`♻️ 自动恢复视图`、`🕒 APScheduler 定时任务已启动`、探针自动注册、域名 IP 同步等）保持 INFO 不动；`[Notify]` 只在没有客户端上下文、提示弹不出去时触发，量小且可能是本该让用户看到的报错，也留在 INFO。
 - **日志**：6 处面板侧的 `print()` 改成 `logger`。`print` 绕过 logging，既没有时间戳和级别，也不受上面那个开关控制：`services/ssh.py` 每次建连的调试行与 `aggregated_view.py` 的翻页行改为 `logger.debug`，`utils/encoding.py` 的 VLESS 解析失败改为 `logger.warning`，`services/deployment.py` 两处裸 `print(e)` 和 `services/dashboard.py` 的 `print` + `traceback.print_exc()` 改为 `logger.exception`（连带堆栈，比原来只有一行信息量更大）。`services/xui_ssh.py` 与 `single_server.py` 里剩下的 8 处 `print` **不动**——它们在通过 SSH 推到目标 VPS 上执行的脚本模板里，`print` 就是把结果回传给面板的通道。
@@ -682,6 +687,22 @@ Docker 容器默认：
 
 ### 9. 能不能把它当作极简面板来用？
 可以，但它的定位本身偏“全功能运维后台”，所以会比极简工具更重、更完整。
+
+### 10. 能直接导入完整版（或另一台面板）的备份吗？两台面板管同一批机器会冲突吗？
+
+**备份可以直接粘贴进来**，「数据备份 / 恢复 → 方式一」会自动做两件事：
+
+- 精简过程中删掉的功能留下的配置项（`github_*` 云备份与 OAuth、`probe_custom_groups`、`sync_job_*` 等）按白名单过滤掉，不会堆进 `data/admin_config.json`
+- `manager_base_url`、`probe_token`、`session_version` 这三个键标识「本面板自己」，**始终保留本地值**，不会被旧面板的值覆盖
+
+**但探针只能上报给一台面板。** VPS 上的 agent 是单个固定名字的 systemd 服务（`x-fusion-agent`），面板地址烧死在 `/root/x_fusion_agent.py` 里。所以：
+
+- 只导入备份 → 机器和节点管理都在，但本面板收不到探针推送，服务器状态显示「探针离线 (超时)」
+- 在本面板重装一次探针 → agent 被改写成上报给本面板，**原面板从此显示这些机器离线**
+
+**重装探针不会让代理服务断线。** 它只覆盖 `/root/x_fusion_agent.py` 和 `x-fusion-agent.service`，不碰 xray / x-ui / hysteria / snell，节点照常跑。断的只是「原面板的监控数据」。
+
+> 部署在软路由等内网设备上时，`manager_base_url` 必须填 **VPS 能访问到的地址**（DDNS + 端口转发或隧道）。填 `192.168.x.x` 的话 VPS 根本连不上，探针永远上报失败。
 
 ---
 
