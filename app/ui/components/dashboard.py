@@ -375,6 +375,13 @@ async def load_dashboard_stats():
         ui.run_javascript("""
         if (window.dashInterval) clearInterval(window.dashInterval);
         window.dashInterval = setInterval(async () => {
+            // 仪表盘已被切走（content_container 被清空）时统计卡片的 DOM 就不在了，
+            // 此时轮询拉回来的数据没有任何接收方，直接自行停掉，避免后台一直空转。
+            if (!document.getElementById('stat-servers')) {
+                clearInterval(window.dashInterval);
+                window.dashInterval = null;
+                return;
+            }
             if (document.hidden) return;
             try {
                 const res = await fetch('/api/dashboard/live_data');

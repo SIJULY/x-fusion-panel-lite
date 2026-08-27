@@ -22,7 +22,7 @@ def calculate_dashboard_data():
     """
     try:
         total_servers = len(SERVERS_CACHE)
-        logger.info(f"[DashboardCalc] start | total_servers={total_servers} nodes_cache_keys={len(NODES_DATA)} probe_cache_keys={len(PROBE_DATA_CACHE)} subs={len(SUBS_CACHE)}")
+        logger.debug(f"[DashboardCalc] start | total_servers={total_servers} nodes_cache_keys={len(NODES_DATA)} probe_cache_keys={len(PROBE_DATA_CACHE)} subs={len(SUBS_CACHE)}")
         online_servers = 0
         total_nodes = 0
         total_traffic_bytes = 0
@@ -113,7 +113,7 @@ def calculate_dashboard_data():
             "bar_chart": {"names": bar_names, "values": bar_values},
             "pie_chart": chart_data
         }
-        logger.info(f"[DashboardCalc] result={result}")
+        logger.debug(f"[DashboardCalc] result={result}")
         return result
     except Exception as e:
         print(f"Error calculating dashboard data: {e}")

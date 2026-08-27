@@ -50,6 +50,13 @@ X-Fusion Panel Lite 是一个面向 **多服务器运维 / VPS 管理 / 节点�
 ## 更新记录
 
 ### 2026-08-27
+- **Bug 修复**：仪表盘的实时轮询在切走视图后不会停止。`ui/components/dashboard.py` 渲染仪表盘时会往浏览器注入一段 `setInterval(..., 3000)`，每 3 秒请求 `/api/dashboard/live_data`；但全项目唯一的 `clearInterval` 就在这段注入代码自己的第一行，只有**再次渲染仪表盘**时才会执行。于是只要看过一次仪表盘，浏览器就会一直每 3 秒打一次接口，切到区域视图、所有服务器、单机详情页都不停，只有刷新整个页面才断。更糟的是离开仪表盘后这些请求毫无意义——回调里每个 DOM 写入都有存在性判断，而 `#stat-servers`、`#chart-bar` 在其他视图并不存在，服务端白算一遍再把 JSON 丢掉。现在让轮询自检：发现统计卡片的 DOM 不在了就 `clearInterval` 自行停掉，重新进仪表盘时会重新装上。
+- **日志**：`services/dashboard.py` 里 `[DashboardCalc] start` / `[DashboardCalc] result=` 两行从 `logger.info` 降为 `logger.debug`。按 3 秒一次计算，这两行原本每天产生约 **57,600 行**日志，且 `result=` 会把完整结果字典写进去（服务器越多这行越长）。
+- **日志**：`core/logging.py` 把 `asyncssh` 压到 `WARNING`。它原本继承 root 的 INFO，每建立一条 SSH 连接就打约 10 行，还会把完整的 base64 远程命令（约 2 KB）写进日志——单机详情页每刷新一次就是一大段噪音。
+- **运维**：`docker-compose.yml` 与 `install.sh` 生成的 compose 给每个服务补上日志轮转（`max-size: 10m`、`max-file: 3`）。原先没有 `logging:` 配置，docker 默认的 json-file 驱动不限大小，日志文件会一直涨到把磁盘吃满。
+- **运维**：`install.sh` 的 `update_source_code` 会在 `git reset --hard` 前后备份并还原 `docker-compose.yml`（保留端口、账号密码与 Caddy 选择），所以已安装的机器拿不到上面这条轮转配置。新增 `ensure_log_rotation`，在还原之后为缺少 `logging:` 的服务补上，已有则跳过；执行 `install.sh` 选 2 更新即可自动生效。
+
+### 2026-08-27
 - **精简**：全项目死代码与残留清理（A 类），共移除 **429 行与 6 个文件**，不改变任何功能行为。
 - 删除 4 个只剩一行转发 import 的空壳模块：`app/ui/dialogs/ssh_console.py`、`deploy_xhttp.py`、`deploy_snell.py`、`deploy_hysteria.py`（各 3 行）——真正的实现分别在 `services/ssh.py` 与 `services/deployment.py`，全项目零引用。
 - 删除 `app/storage/files.py`（25 行，整个文件）：`safe_save` 与 `FILE_LOCK` 的 JSON 落盘链路，在数据层迁到 SQLite 后已零引用。

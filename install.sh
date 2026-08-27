@@ -83,6 +83,30 @@ update_source_code() {
     [ -f "${backup_dir}/Caddyfile" ] && cp "${backup_dir}/Caddyfile" "${INSTALL_DIR}/Caddyfile"
 
     rm -rf "${backup_dir}"
+
+    # 老版本生成的 compose 没有日志轮转，还原回来后补上（已有则跳过）
+    ensure_log_rotation "${INSTALL_DIR}/docker-compose.yml"
+}
+
+# docker 默认 json-file 驱动不限大小，日志会一直涨到把磁盘吃满。
+# 这里给每个服务补上轮转配置：container_name 是每个服务都有且只有一行的键，
+# 在它后面插入同级的 logging 块即可，YAML 键顺序无关。
+ensure_log_rotation() {
+    local file="$1"
+    [ -f "$file" ] || return 0
+    grep -q "max-size" "$file" && return 0
+
+    awk '
+        { print }
+        /^    container_name:/ {
+            print "    logging:"
+            print "      driver: json-file"
+            print "      options:"
+            print "        max-size: \"10m\""
+            print "        max-file: \"3\""
+        }
+    ' "$file" > "${file}.tmp" && mv "${file}.tmp" "$file"
+    print_info "已为 docker-compose.yml 补上日志轮转配置（单文件 10MB × 3）"
 }
 
 generate_compose() {
@@ -111,6 +135,11 @@ services:
       - XUI_USERNAME=${USER}
       - XUI_PASSWORD=${PASS}
       - XUI_SECRET_KEY=${SECRET}
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   subconverter:
     image: tindy2013/subconverter:latest
@@ -120,6 +149,11 @@ services:
       - "25500"
     environment:
       - TZ=Asia/Shanghai
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 EOF
 
     if [ "$ENABLE_CADDY" == "true" ]; then
@@ -137,6 +171,11 @@ EOF
       - ./caddy_data:/data
     depends_on:
       - x-fusion-panel
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 EOF
     fi
 }
