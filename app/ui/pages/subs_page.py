@@ -1,3 +1,16 @@
+"""订阅管理页。
+
+布局参考 sub-store：**上半部分是节点池**（面板同步来的节点 + 手动加的独立节点），
+**下半部分是订阅与组合**（把节点打包成链接下发给客户端）。顺序是刻意的——先有节点才
+有订阅，从上往下读就是用户的操作顺序。原来订阅在上、节点在下，新建一条订阅时得先往下
+滚去加节点、再滚回上面来建订阅；而且独立节点为空时那个 h-64 的大虚线框正好占满首屏，
+一进页面看到的是一片空白。
+
+配色统一走 _TONES 一份色板 + var(--xf-*) 主题变量，不再一处一个三元表达式。切主题时
+main_page.toggle_theme 会整页重渲染这个视图（scope == 'SUBS'），所以这里按 is_dark
+直接算死值是安全的，不依赖那套 className 字符串替换。
+"""
+
 import asyncio
 import time
 
@@ -18,6 +31,182 @@ from app.ui.common.notifications import safe_copy_to_clipboard, safe_notify, sho
 # 格式菜单的排列顺序。SUB_TARGETS 是 dict，直接遍历顺序不好控制，而这里的顺序
 # 决定用户第一眼看到哪几个，所以固定下来：常用的排前面。
 TARGET_ORDER = ['clash', 'singbox', 'surge', 'quanx', 'loon', 'v2ray', 'clashr', 'ss']
+
+# 语义色板：(前景, 底色, 描边)，深色一套 / 浅色一套。
+# 之前这些颜色散在十几个 `... if is_dark else ...` 里，同一个语义在不同卡片上深浅不一致；
+# 收敛到这里之后，「节点是蓝的、普通订阅是青的、组合是紫的、警告是琥珀、危险是玫红」
+# 在整页范围内只有一处定义。
+_TONES = {
+    'node': (('#7dd3fc', 'rgba(14,165,233,0.13)', 'rgba(56,189,248,0.34)'),
+             ('#0369a1', 'rgba(14,165,233,0.10)', 'rgba(14,165,233,0.28)')),
+    'sub': (('#67e8f9', 'rgba(6,182,212,0.13)', 'rgba(34,211,238,0.34)'),
+            ('#0e7490', 'rgba(6,182,212,0.10)', 'rgba(6,182,212,0.28)')),
+    'group': (('#c4b5fd', 'rgba(139,92,246,0.15)', 'rgba(167,139,250,0.36)'),
+              ('#6d28d9', 'rgba(139,92,246,0.10)', 'rgba(139,92,246,0.28)')),
+    'ok': (('#6ee7b7', 'rgba(16,185,129,0.13)', 'rgba(52,211,153,0.34)'),
+           ('#047857', 'rgba(16,185,129,0.10)', 'rgba(16,185,129,0.28)')),
+    'warn': (('#fcd34d', 'rgba(245,158,11,0.14)', 'rgba(251,191,36,0.36)'),
+             ('#b45309', 'rgba(245,158,11,0.12)', 'rgba(245,158,11,0.32)')),
+    'danger': (('#fda4af', 'rgba(244,63,94,0.13)', 'rgba(251,113,133,0.34)'),
+               ('#be123c', 'rgba(244,63,94,0.10)', 'rgba(244,63,94,0.28)')),
+    'muted': (('#94a3b8', 'rgba(148,163,184,0.10)', 'rgba(148,163,184,0.26)'),
+              ('#64748b', 'rgba(100,116,139,0.08)', 'rgba(100,116,139,0.24)')),
+}
+
+# 卡片阴影放在 class 里而不是 style 里：inline style 会盖掉 hover:shadow-*，
+# 放 class 才能有悬停微抬。
+_CARD_SHADOW = 'shadow-[0_6px_18px_rgba(15,23,42,0.10)] hover:shadow-[0_10px_26px_rgba(15,23,42,0.18)]'
+
+
+def tone(name, is_dark):
+    fg, bg, border = _TONES.get(name, _TONES['muted'])[0 if is_dark else 1]
+    return {'fg': fg, 'bg': bg, 'border': border}
+
+
+def chip(text, name='muted', is_dark=True, icon=None, tip=None):
+    """一枚小标签。卡片上的元信息全部走它，粗细 / 间距 / 圆角只有这一处定义。"""
+    t = tone(name, is_dark)
+    with ui.row().classes('items-center gap-1 px-2 py-[3px] rounded-sm border shrink-0') \
+            .style(f"background: {t['bg']}; border-color: {t['border']}; color: {t['fg']};") as row:
+        if icon:
+            ui.icon(icon).classes('text-[13px]')
+        ui.label(str(text)).classes('text-[11px] font-bold font-mono leading-none whitespace-nowrap')
+    if tip:
+        row.tooltip(tip)
+    return row
+
+
+def stat_pill(icon, label, value, name, is_dark, tip=None):
+    """页头右侧的总览药丸：一眼看清节点 / 订阅各有多少。"""
+    t = tone(name, is_dark)
+    with ui.row().classes('items-center gap-2 px-3 py-1.5 rounded-sm border shrink-0') \
+            .style(f"background: {t['bg']}; border-color: {t['border']};") as row:
+        ui.icon(icon).classes('text-[15px]').style(f"color: {t['fg']};")
+        ui.label(str(value)).classes('text-base font-black leading-none').style(f"color: {t['fg']};")
+        ui.label(label).classes('text-[11px] font-bold leading-none whitespace-nowrap') \
+            .style('color: var(--xf-text-muted);')
+    if tip:
+        row.tooltip(tip)
+    return row
+
+
+def section_header(icon, title, desc, is_dark, name='node'):
+    """区块标题栏。返回右侧操作区，调用方 `with ...:` 往里塞按钮。"""
+    t = tone(name, is_dark)
+    with ui.row().classes('w-full items-center justify-between gap-3 flex-wrap mb-3 pb-2.5 border-b') \
+            .style('border-color: var(--xf-card-border);'):
+        with ui.row().classes('items-center gap-3 min-w-0'):
+            with ui.element('div').classes('w-9 h-9 rounded-sm flex items-center justify-center border shrink-0') \
+                    .style(f"background: {t['bg']}; border-color: {t['border']}; color: {t['fg']};"):
+                ui.icon(icon).classes('text-[18px]')
+            with ui.column().classes('gap-0 min-w-0'):
+                ui.label(title).classes('text-lg font-black tracking-wide leading-tight') \
+                    .style('color: var(--xf-text-strong);')
+                if desc:
+                    ui.label(desc).classes('text-[11px] font-medium leading-tight') \
+                        .style('color: var(--xf-text-subtle);')
+        actions = ui.row().classes('items-center gap-2 shrink-0 flex-wrap')
+    return actions
+
+
+def group_label(icon, text, count, name, is_dark, note=''):
+    """区块内部的小分组标题（普通订阅 / 组合订阅 / 独立节点）。"""
+    t = tone(name, is_dark)
+    with ui.row().classes('w-full items-center gap-2 flex-wrap mb-2'):
+        ui.icon(icon).classes('text-[15px]').style(f"color: {t['fg']};")
+        ui.label(text).classes('text-xs font-black tracking-wide').style('color: var(--xf-text-strong);')
+        chip(f'{count} 条' if count else '0', name if count else 'muted', is_dark)
+        if note:
+            ui.label(note).classes('text-[10px] font-medium').style('color: var(--xf-text-subtle);')
+
+
+def action_btn(label, icon, on_click, name, is_dark, tip=None):
+    t = tone(name, is_dark)
+    b = ui.button(label, icon=icon, on_click=on_click).props('flat dense size=sm') \
+        .classes('rounded-sm font-black border px-3 whitespace-nowrap') \
+        .style(f"background: {t['bg']}; border-color: {t['border']}; color: {t['fg']};")
+    if tip:
+        b.tooltip(tip)
+    return b
+
+
+def icon_btn(icon, on_click, name, is_dark, tip=None, size='sm'):
+    t = tone(name, is_dark)
+    b = ui.button(icon=icon, on_click=on_click).props(f'flat dense round size={size}') \
+        .style(f"color: {t['fg']};")
+    if tip:
+        b.tooltip(tip)
+    return b
+
+
+def card_shell(name, is_dark):
+    """卡片外壳的 (classes, style)。左侧 4px 竖条按语义上色，扫一眼就知道是哪一类。
+
+    注意 border-left-color 必须排在 border-color 后面：inline style 里后写的赢，
+    否则四边同色，左边那条竖线就白设了。
+    """
+    t = tone(name, is_dark)
+    cls = f'w-full flex flex-col gap-2 p-3 mb-2 rounded-sm border border-l-4 transition-shadow {_CARD_SHADOW}'
+    sty = (f"background: var(--xf-panel-bg); border-color: var(--xf-card-border); "
+           f"border-left-color: {t['fg']};")
+    return cls, sty
+
+
+def empty_state(icon, title, desc, is_dark, name='muted', btn_label=None, btn_icon='add', on_click=None):
+    """空态。原来是 h-64 的大虚线框，一空就把整页顶下去；这里压到 py-7 并带上入口按钮。"""
+    t = tone(name, is_dark)
+    with ui.column().classes('w-full items-center justify-center gap-2 py-7 px-4 mb-3 rounded-sm border border-dashed') \
+            .style('background: var(--xf-panel-bg); border-color: var(--xf-card-border);'):
+        ui.icon(icon).classes('text-[30px]').style(f"color: {t['fg']}; opacity: 0.75;")
+        ui.label(title).classes('text-sm font-black').style('color: var(--xf-text-muted);')
+        if desc:
+            ui.label(desc).classes('text-[11px] font-medium text-center').style('color: var(--xf-text-subtle);')
+        if btn_label and on_click:
+            action_btn(btn_label, btn_icon, on_click, name, is_dark)
+
+
+def thin_hint(text):
+    """比空态更轻的一行提示，用在「订阅有、但这一类没有」的场景。"""
+    ui.label(text).classes('w-full text-[11px] font-medium py-2.5 px-3 mb-3 rounded-sm border border-dashed') \
+        .style('background: var(--xf-panel-bg); border-color: var(--xf-card-border); color: var(--xf-text-subtle);')
+
+
+def confirm_dialog(title, body_lines, confirm_label, on_confirm, is_dark, name='danger', icon='warning'):
+    """统一的二次确认弹窗。
+
+    原来三个确认框（删订阅 / 删独立节点 / 清理失效）各写一遍渐变头 + 按钮，样式还不完全
+    一致；现在只有这一处，语义靠 name 换色。
+    """
+    t = tone(name, is_dark)
+    with ui.dialog() as d, ui.card().classes('w-[400px] p-0 gap-0 overflow-hidden rounded-sm border') \
+            .style(f"background: var(--xf-panel-bg); border-color: {t['border']}; "
+                   f"box-shadow: 0 18px 48px rgba(2,6,23,0.45);"):
+        with ui.row().classes('w-full items-center gap-3 p-4 border-b') \
+                .style(f"background: {t['bg']}; border-color: {t['border']};"):
+            ui.icon(icon).classes('text-[20px]').style(f"color: {t['fg']};")
+            ui.label(title).classes('font-black text-base tracking-wide').style(f"color: {t['fg']};")
+
+        with ui.column().classes('w-full p-4 gap-2').style('background: var(--xf-panel-bg);'):
+            for line in body_lines:
+                if not line:
+                    continue
+                ui.label(line).classes('text-xs font-medium leading-relaxed').style('color: var(--xf-text-muted);')
+
+        with ui.row().classes('w-full justify-end items-center gap-2 p-3 border-t') \
+                .style('background: var(--xf-soft-bg); border-color: var(--xf-card-border);'):
+            ui.button('取消', on_click=d.close).props('flat dense size=sm') \
+                .classes('rounded-sm font-bold px-3').style('color: var(--xf-text-muted);')
+
+            async def go():
+                d.close()
+                await on_confirm()
+
+            ui.button(confirm_label, on_click=go).props('flat dense size=sm') \
+                .classes('rounded-sm font-black border px-4') \
+                .style(f"background: {t['bg']}; border-color: {t['border']}; color: {t['fg']};")
+
+    d.open()
+    return d
 
 
 def ordered_targets():
@@ -49,12 +238,17 @@ def open_qr_dialog(title, url_pairs):
     labels = [lbl for lbl, _ in url_pairs]
     url_map = dict(url_pairs)
 
-    with ui.dialog() as d, ui.card().classes('w-[380px] p-0 gap-0 overflow-hidden rounded-sm bg-[#070b14] border border-[#1e3a5f]/55 shadow-[0_18px_48px_rgba(0,0,0,0.78)]' if is_dark else 'w-[380px] p-0 gap-0 overflow-hidden rounded-sm bg-white border border-slate-300/90 shadow-[0_10px_28px_rgba(148,163,184,0.18)]'):
-        with ui.row().classes('w-full justify-between items-center p-4 border-b border-[#1e3a5f]/60 bg-gradient-to-r from-[#0a1526] to-[#050a14]' if is_dark else 'w-full justify-between items-center p-4 border-b border-slate-300/90 bg-gradient-to-r from-[#f8fbff] to-[#eaf2ff]'):
-            ui.label(f'扫码导入 · {title}').classes('text-base font-black text-slate-100 tracking-wide truncate' if is_dark else 'text-base font-black text-slate-800 tracking-wide truncate')
-            ui.button(icon='close', on_click=d.close).props('flat round dense color=grey')
+    with ui.dialog() as d, ui.card().classes('w-[380px] p-0 gap-0 overflow-hidden rounded-sm border') \
+            .style('background: var(--xf-panel-bg); border-color: var(--xf-card-border); '
+                   'box-shadow: 0 18px 48px rgba(2,6,23,0.45);'):
+        with ui.row().classes('w-full justify-between items-center p-4 border-b') \
+                .style('background: var(--xf-soft-bg); border-color: var(--xf-card-border);'):
+            ui.label(f'扫码导入 · {title}').classes('text-base font-black tracking-wide truncate') \
+                .style('color: var(--xf-text-strong);')
+            ui.button(icon='close', on_click=d.close).props('flat round dense') \
+                .style('color: var(--xf-text-muted);')
 
-        with ui.column().classes('w-full p-4 gap-3 items-center bg-[#030712]' if is_dark else 'w-full p-4 gap-3 items-center bg-[#f8fbff]'):
+        with ui.column().classes('w-full p-4 gap-3 items-center').style('background: var(--xf-panel-bg);'):
             # 下拉框排在二维码上面。render 是闭包、调用时才查名字，
             # 所以它定义在 on_change 之后没问题。
             ui.select(labels, value=labels[0], label='输出格式',
@@ -69,11 +263,16 @@ def open_qr_dialog(title, url_pairs):
                 with holder:
                     data = qr_data_uri(url)
                     if data:
-                        ui.image(data).style('width: 220px; height: 220px').classes('rounded-sm bg-white p-2 border border-slate-300')
+                        ui.image(data).style('width: 220px; height: 220px') \
+                            .classes('rounded-sm bg-white p-2 border border-slate-300')
                     else:
-                        ui.label('二维码生成失败（qrcode 库不可用），可直接复制下面的链接').classes('text-xs text-amber-400 text-center')
-                    with ui.row().classes('w-full items-center gap-2 p-2 rounded-sm border cursor-pointer').style('background: var(--xf-code-bg); border-color: var(--xf-card-border);').on('click', lambda u=url: safe_copy_to_clipboard(u)):
-                        ui.label(url).classes('text-[10px] font-mono flex-grow break-all').style('color: var(--xf-text-strong);')
+                        ui.label('二维码生成失败（qrcode 库不可用），可直接复制下面的链接') \
+                            .classes('text-xs text-center').style(f"color: {tone('warn', is_dark)['fg']};")
+                    with ui.row().classes('w-full items-center gap-2 p-2 rounded-sm border cursor-pointer') \
+                            .style('background: var(--xf-code-bg); border-color: var(--xf-card-border);') \
+                            .on('click', lambda u=url: safe_copy_to_clipboard(u)):
+                        ui.label(url).classes('text-[10px] font-mono flex-grow break-all') \
+                            .style('color: var(--xf-text-strong);')
                         ui.icon('content_copy', size='xs').style('color: var(--xf-text-muted);')
 
             render(labels[0])
@@ -107,10 +306,29 @@ def access_text(token):
         when = f'{int(ago // 86400)} 天前'
 
     ua = (entry.get('last_ua') or '').strip()
-    parts = [f'📡 已拉取 {count} 次', f'最后 {when}']
+    parts = [f'拉取 {count} 次', f'最后 {when}']
     if ua:
         parts.append(ua[:28])
     return ' · '.join(parts)
+
+
+def link_bar(url, is_dark, buttons=None, tip='点击复制'):
+    """代码底色的链接条：整条可点复制，右侧留给格式按钮。"""
+    with ui.row().classes('w-full items-center gap-2 p-2 rounded-sm border justify-between') \
+            .style('background: var(--xf-code-bg); border-color: var(--xf-card-border);'):
+        with ui.row().classes('items-center gap-2 flex-grow min-w-0 cursor-pointer') \
+                .on('click', lambda u=url: safe_copy_to_clipboard(u)) as clickable:
+            ui.icon('link').classes('text-[14px] shrink-0').style('color: var(--xf-accent);')
+            ui.label(url).classes('text-[11px] font-mono font-bold truncate select-all') \
+                .style('color: var(--xf-text-strong);')
+        clickable.tooltip(tip)
+
+        if buttons:
+            with ui.row().classes('items-center gap-1 shrink-0'):
+                buttons()
+        else:
+            # 没有格式按钮时也要有个「可以复制」的视觉暗示，否则整条只是看着像纯文本
+            ui.icon('content_copy').classes('text-[13px] shrink-0').style('color: var(--xf-text-muted);')
 
 
 async def load_subs_view():
@@ -161,7 +379,8 @@ async def load_subs_view():
     is_dark = bool(app.storage.user.get('is_dark', True))
 
     content_container.clear()
-    content_container.classes(remove='justify-center items-center overflow-hidden p-6', add='h-full overflow-y-auto p-4 pl-6 justify-start')
+    content_container.classes(remove='justify-center items-center overflow-hidden p-6',
+                              add='h-full overflow-y-auto p-4 pl-6 justify-start')
     content_container.style('background-color: var(--xf-bg-main);')
 
     # 用管线的索引当「有效 key」的唯一标准，页面显示的有效数就等于订阅真正能解析出的
@@ -170,269 +389,311 @@ async def load_subs_view():
     lookup = build_node_lookup()
     all_active_keys = set(lookup.keys())
 
-    with content_container:
-        page_header_cls = 'w-full mb-5 justify-between items-center border-b pb-3'
-        page_header_style = 'border-color: var(--xf-card-border);'
-        page_icon_cls = 'w-10 h-10 rounded-sm flex items-center justify-center border relative overflow-hidden'
-        page_icon_style = 'background: var(--xf-code-bg); border-color: var(--xf-card-border); color: var(--xf-accent); box-shadow: 0 4px 12px rgba(15,23,42,0.12);'
-        page_title_cls = 'text-2xl font-black tracking-wide'
-        page_title_style = 'color: var(--xf-text-strong);'
-        card_cls = 'w-full p-4 mb-3 transition border border-l-4 rounded-sm'
-        card_style = 'background: var(--xf-panel-bg); border-color: var(--xf-card-border); box-shadow: 0 8px 24px rgba(15,23,42,0.10);'
+    # 索引连同原始下标一起留着：删除走的是 `del SUBS_CACHE[i]`，分组后仍要用真实下标。
+    normal_subs = [(i, s) for i, s in enumerate(SUBS_CACHE) if s.get('type') != 'collection']
+    collections = [(i, s) for i, s in enumerate(SUBS_CACHE) if s.get('type') == 'collection']
 
-        with ui.row().classes(page_header_cls).style(page_header_style):
-            with ui.row().classes('items-center gap-3'):
-                with ui.element('div').classes(page_icon_cls).style(page_icon_style):
+    # 面板节点按服务器聚合。lookup 里 srv 为 None 的就是独立节点，单独一节展示。
+    panel_servers = {}
+    for _key, (node, host, srv) in lookup.items():
+        if not srv:
+            continue
+        row = panel_servers.setdefault(srv.get('url'), {
+            'name': srv.get('name') or '未命名服务器', 'host': host, 'total': 0, 'on': 0,
+        })
+        row['total'] += 1
+        if node.get('enable', True):
+            row['on'] += 1
+    panel_total = sum(v['total'] for v in panel_servers.values())
+    panel_on = sum(v['on'] for v in panel_servers.values())
+
+    def open_batch_import():
+        from app.ui.dialogs.sub_dialogs import open_batch_import_dialog
+        open_batch_import_dialog()
+
+    def open_add_independent_node():
+        from app.ui.dialogs.sub_dialogs import open_independent_node_editor
+        open_independent_node_editor(None)
+
+    with content_container:
+        # ───────────── 页头 + 总览 ─────────────
+        with ui.row().classes('w-full items-center justify-between gap-4 flex-wrap mb-5 pb-3 border-b') \
+                .style('border-color: var(--xf-card-border);'):
+            with ui.row().classes('items-center gap-3 min-w-0'):
+                with ui.element('div').classes('w-10 h-10 rounded-sm flex items-center justify-center '
+                                               'border relative overflow-hidden shrink-0') \
+                        .style('background: var(--xf-code-bg); border-color: var(--xf-card-border); '
+                               'color: var(--xf-accent); box-shadow: 0 4px 12px rgba(15,23,42,0.12);'):
                     ui.element('div').classes('absolute inset-0').style('background: var(--xf-accent-soft);')
                     ui.icon('rss_feed').classes('text-[18px] drop-shadow-[0_0_5px_currentColor]')
-                ui.label('订阅管理').classes(page_title_cls).style(page_title_style)
-            ui.button('新建订阅', icon='add', on_click=lambda: open_advanced_sub_editor(None)).props('flat').classes('bg-emerald-950/45 text-emerald-300 border border-emerald-500/45 hover:bg-emerald-900/55 font-black rounded-sm px-4' if is_dark else 'bg-emerald-100 text-emerald-700 border border-emerald-300 hover:bg-emerald-200 font-black rounded-sm px-4')
+                with ui.column().classes('gap-0 min-w-0'):
+                    ui.label('订阅管理').classes('text-2xl font-black tracking-wide leading-tight') \
+                        .style('color: var(--xf-text-strong);')
+                    ui.label('上面维护节点池，下面把节点打包成订阅下发给客户端') \
+                        .classes('text-[11px] font-medium leading-tight').style('color: var(--xf-text-subtle);')
 
-        if not SUBS_CACHE:
-            with ui.column().classes('w-full h-64 justify-center items-center border border-dashed rounded-sm').style('background: var(--xf-panel-bg); border-color: var(--xf-card-border); color: var(--xf-text-muted);'):
-                ui.icon('rss_feed', size='4rem').style('color: var(--xf-accent); opacity: 0.8;')
-                ui.label('暂无订阅').classes('text-sm font-bold').style('color: var(--xf-text-muted);')
+            with ui.row().classes('items-center gap-2 flex-wrap'):
+                stat_pill('lan', '可用节点', len(all_active_keys), 'node', is_dark,
+                          f'面板 {panel_total} + 独立 {len(INDEPENDENT_NODES_CACHE)}')
+                stat_pill('hub', '独立节点', len(INDEPENDENT_NODES_CACHE), 'node', is_dark, '手动粘贴的分享链接')
+                stat_pill('rss_feed', '订阅', len(normal_subs), 'sub', is_dark, '手动勾选节点的普通订阅')
+                stat_pill('layers', '组合', len(collections), 'group', is_dark, '合并多条订阅的组合订阅')
 
-        for idx, sub in enumerate(SUBS_CACHE):
+        # ═════════════ ① 节点池 ═════════════
+        with section_header('hub', '节点池',
+                            f'订阅能引用的全部节点 · 面板 {panel_total} + 独立 {len(INDEPENDENT_NODES_CACHE)}',
+                            is_dark, 'node'):
+            action_btn('批量导入', 'playlist_add', open_batch_import, 'muted', is_dark, '一次粘贴多条分享链接')
+            action_btn('添加独立节点', 'add', open_add_independent_node, 'node', is_dark, '手填一条分享链接')
+
+        # 面板节点：只读概览。真正的增删在「服务器管理」里，这里给的是「我手上有多少料」。
+        if panel_servers:
+            with ui.element('div').classes('w-full flex flex-col gap-2 p-3 mb-4 rounded-sm border') \
+                    .style('background: var(--xf-code-bg); border-color: var(--xf-card-border);'):
+                with ui.row().classes('w-full items-center justify-between gap-2 flex-wrap'):
+                    with ui.row().classes('items-center gap-2 flex-wrap'):
+                        ui.icon('dns').classes('text-[15px]').style('color: var(--xf-accent);')
+                        ui.label('面板节点').classes('text-xs font-black tracking-wide') \
+                            .style('color: var(--xf-text-strong);')
+                        chip(f'{len(panel_servers)} 台服务器', 'muted', is_dark)
+                        chip(f'启用 {panel_on} / 共 {panel_total}', 'ok' if panel_on else 'warn', is_dark,
+                             tip='x-ui 里被禁用的入站默认不下发')
+                    ui.label('由服务器管理同步，此处只读').classes('text-[10px] font-medium') \
+                        .style('color: var(--xf-text-subtle);')
+
+                with ui.row().classes('w-full gap-1.5 flex-wrap max-h-[116px] overflow-y-auto'):
+                    for url, info in panel_servers.items():
+                        chip(f"{info['name']} · {info['total']}", 'node' if info['on'] else 'muted', is_dark,
+                             icon='dns',
+                             tip=f"{url} · 出口 {info['host'] or '—'} · 启用 {info['on']} / 共 {info['total']}")
+
+        # 独立节点
+        group_label('bolt', '独立节点', len(INDEPENDENT_NODES_CACHE), 'node', is_dark,
+                    '手动粘贴的分享链接，可被任意订阅引用')
+
+        if not INDEPENDENT_NODES_CACHE:
+            empty_state('hub', '还没有独立节点',
+                        '把机场或自建的分享链接粘进来，就能和面板节点一起打包成订阅',
+                        is_dark, 'node', '批量导入', 'playlist_add', open_batch_import)
+        else:
+            for idx, inode in enumerate(INDEPENDENT_NODES_CACHE):
+                link = inode.get('_raw_link', '') or ''
+                protocol = (link.split('://')[0] if '://' in link else 'unknown').lower()
+                ikey = f"independent|{inode.get('id')}"
+                used_by = [s.get('name', '未命名') for s in SUBS_CACHE if ikey in (s.get('nodes', []) or [])]
+
+                cls, sty = card_shell('node', is_dark)
+                with ui.element('div').classes(cls).style(sty):
+                    with ui.row().classes('w-full items-center justify-between gap-3 flex-wrap'):
+                        with ui.row().classes('items-center gap-2 min-w-0 flex-wrap'):
+                            chip(protocol, 'node', is_dark, tip=f"节点 ID: {inode.get('id', 'N/A')}")
+                            ui.label(inode.get('remark') or '未命名节点') \
+                                .classes('text-sm font-black tracking-wide truncate') \
+                                .style('color: var(--xf-text-strong);')
+                            if used_by:
+                                chip(f'{len(used_by)} 条订阅在用', 'sub', is_dark, icon='link',
+                                     tip='、'.join(used_by))
+                            else:
+                                chip('未被引用', 'muted', is_dark, icon='link_off', tip='还没有任何订阅勾选它')
+
+                        with ui.row().classes('items-center gap-1.5 shrink-0'):
+                            def edit_inode(node=inode):
+                                from app.ui.dialogs.sub_dialogs import open_independent_node_editor
+                                open_independent_node_editor(node)
+
+                            action_btn('编辑', 'edit', edit_inode, 'muted', is_dark, '改名 / 换链接')
+
+                            def del_inode(i=idx, node=inode):
+                                ik = f"independent|{node.get('id')}"
+                                refs = [s.get('name', '未命名') for s in SUBS_CACHE
+                                        if ik in (s.get('nodes', []) or [])]
+                                lines = ['删掉之后，引用它的订阅会少掉这个节点。']
+                                if refs:
+                                    lines.append('⚠️ 以下订阅正在使用它：' + '、'.join(refs))
+
+                                async def apply():
+                                    del INDEPENDENT_NODES_CACHE[i]
+                                    await save_independent_nodes()
+                                    await load_subs_view()
+                                    safe_notify('已删除独立节点', 'positive')
+
+                                confirm_dialog('确定删除此独立节点？', lines, '删除', apply,
+                                               is_dark, 'danger', 'delete_forever')
+
+                            icon_btn('delete', del_inode, 'danger', is_dark, '删除这个独立节点')
+
+                    link_bar(link, is_dark, tip='点击复制节点链接')
+
+        # ═════════════ ② 订阅与组合 ═════════════
+        ui.element('div').classes('w-full h-px my-6').style('background: var(--xf-card-border);')
+
+        with section_header('rss_feed', '订阅与组合', '给客户端用的链接，节点从上面的节点池里挑',
+                            is_dark, 'sub'):
+            action_btn('新建订阅', 'add', lambda: open_advanced_sub_editor(None), 'ok', is_dark,
+                       '勾选节点建普通订阅，或建一条合并多条订阅的组合')
+
+        def render_sub_card(idx, sub):
             is_collection = sub.get('type') == 'collection'
             token = sub.get('token', '')
-
-            saved_node_ids = set(sub.get('nodes', []) or [])
-            valid_count = len(saved_node_ids.intersection(all_active_keys))
-            total_count = len(saved_node_ids)
-            dead_keys = [k for k in (sub.get('nodes', []) or []) if k not in all_active_keys]
+            node_keys = sub.get('nodes', []) or []
+            saved_keys = set(node_keys)
+            valid_count = len(saved_keys & all_active_keys)
+            total_count = len(saved_keys)
+            dead_keys = [k for k in node_keys if k not in all_active_keys]
 
             try:
                 delivered = len(resolve_sub_nodes(sub, lookup=lookup))
             except Exception:
                 delivered = None
 
-            with ui.card().classes(card_cls).style(card_style):
-                with ui.row().classes('justify-between w-full items-start'):
-                    with ui.column().classes('gap-1'):
-                        with ui.row().classes('items-center gap-2'):
-                            ui.label(sub.get('name', '未命名订阅')).classes('font-black text-lg tracking-wide').style('color: var(--xf-text-strong);')
+            members = sub.get('members', []) or []
+            member_names = []
+            broken_members = 0
+            for mt in members:
+                m = next((s for s in SUBS_CACHE if s.get('token') == mt), None)
+                if m:
+                    member_names.append(m.get('name') or '未命名')
+                else:
+                    broken_members += 1
+                    member_names.append(f'已失效({mt[:6]})')
+
+            name = 'group' if is_collection else 'sub'
+            cls, sty = card_shell(name, is_dark)
+            raw_url = f"{origin}/sub/{token}"
+
+            with ui.element('div').classes(cls).style(sty):
+                with ui.row().classes('w-full items-start justify-between gap-3 flex-wrap'):
+                    with ui.column().classes('gap-2 min-w-0 flex-grow'):
+                        with ui.row().classes('items-center gap-2 flex-wrap'):
+                            ui.label(sub.get('name') or '未命名订阅') \
+                                .classes('text-base font-black tracking-wide') \
+                                .style('color: var(--xf-text-strong);')
+                            chip('组合' if is_collection else '普通', name, is_dark,
+                                 icon='layers' if is_collection else 'rss_feed',
+                                 tip='节点来自多个成员订阅的合并' if is_collection else '手动勾选的节点')
+
+                        with ui.row().classes('items-center gap-1.5 flex-wrap'):
                             if is_collection:
-                                ui.badge('组合', color='purple').props('outline size=xs').classes('text-purple-300 border-purple-500/45 rounded-sm' if is_dark else 'text-purple-700 border-purple-300 rounded-sm').tooltip('节点来自多个成员订阅的合并')
+                                chip(f'成员 {len(members)}', 'group', is_dark, icon='account_tree',
+                                     tip='、'.join(member_names) or '还没有成员')
                             else:
-                                ui.badge('普通', color='cyan').props('outline size=xs').classes('text-cyan-300 border-cyan-500/45 rounded-sm' if is_dark else 'text-sky-700 border-sky-300 rounded-sm')
+                                chip(f'节点 {valid_count} / {total_count}',
+                                     'ok' if valid_count else 'muted', is_dark, icon='lan',
+                                     tip='有效 / 已勾选')
 
-                        if is_collection:
-                            members = sub.get('members', []) or []
-                            names = []
-                            for mt in members:
-                                m = next((s for s in SUBS_CACHE if s.get('token') == mt), None)
-                                names.append(m.get('name', '未命名') if m else f'⚠️ 已失效({mt[:6]})')
-                            ui.label(f"🧩 合并 {len(members)} 个订阅 → 实际下发 {delivered if delivered is not None else '?'} 个节点") \
-                                .classes('text-xs font-bold text-purple-400 font-mono')
-                            if names:
-                                ui.label('成员: ' + ' / '.join(names)).classes('text-[11px] font-mono').style('color: var(--xf-text-muted);')
-                        else:
-                            color_cls = 'text-green-400' if valid_count > 0 else 'text-slate-500'
-                            ui.label(f"⚡ 包含节点: {valid_count} (有效) / {total_count} (总计)").classes(f'text-xs font-bold {color_cls} font-mono')
-                            # 有效数 ≠ 实际下发数，说明筛选规则把节点刷掉了。不点开预览也能看见，
-                            # 免得「明明选了 20 个客户端只有 3 个」还得去猜。
-                            if delivered is not None and delivered != valid_count:
-                                ui.label(f"🔎 筛选后实际下发: {delivered} 个").classes('text-[11px] font-bold text-amber-400 font-mono')
+                            if delivered is not None:
+                                # 有效数 ≠ 实际下发数，说明筛选规则把节点刷掉了。不点开预览也能看见，
+                                # 免得「明明选了 20 个客户端只有 3 个」还得去猜。
+                                mismatch = (not is_collection) and delivered != valid_count
+                                chip(f'下发 {delivered}',
+                                     'warn' if (mismatch or not delivered) else 'ok', is_dark,
+                                     icon='download',
+                                     tip='按筛选 / 改名规则算完后真正给客户端的节点数'
+                                         + ('（筛选规则刷掉了一部分）' if mismatch else ''))
 
-                        acc = access_text(token)
-                        if acc:
-                            ui.label(acc).classes('text-[11px] font-mono').style('color: var(--xf-text-muted);').tooltip('访问统计只放内存，面板重启后清零')
+                            if dead_keys:
+                                chip(f'失效 {len(dead_keys)}', 'danger', is_dark, icon='link_off',
+                                     tip='节点所在服务器已被删除，或 x-ui 里的 ID 变了')
+                            if broken_members:
+                                chip(f'成员失效 {broken_members}', 'danger', is_dark, icon='warning',
+                                     tip='引用的成员订阅已被删除')
 
-                    with ui.row().classes('gap-2 items-center'):
+                            acc = access_text(token)
+                            if acc:
+                                chip(acc, 'muted', is_dark, icon='history',
+                                     tip='访问统计只放内存，面板重启后清零')
+
+                        if is_collection and member_names:
+                            ui.label('合并: ' + ' + '.join(member_names)) \
+                                .classes('text-[11px] font-mono') \
+                                .style('color: var(--xf-text-subtle);')
+
+                    with ui.row().classes('items-center gap-1.5 shrink-0'):
                         if dead_keys:
-                            async def do_clean(s=sub, dead=list(dead_keys)):
-                                with ui.dialog() as cd, ui.card().classes('w-[380px] p-0 gap-0 overflow-hidden rounded-sm bg-[#070b14] border border-amber-800/55' if is_dark else 'w-[380px] p-0 gap-0 overflow-hidden rounded-sm bg-white border border-amber-300'):
-                                    with ui.column().classes('w-full p-5 gap-2 bg-gradient-to-r from-[#1a1405] to-[#0b0911] border-b border-amber-900/60' if is_dark else 'w-full p-5 gap-2 bg-gradient-to-r from-amber-50 to-orange-50 border-b border-amber-200'):
-                                        ui.label(f'清理 {len(dead)} 个失效节点？').classes('font-black text-amber-300 text-lg tracking-wide' if is_dark else 'font-black text-amber-700 text-lg tracking-wide')
-                                        ui.label('这些节点所在的服务器已被删除，或在 x-ui 里的 ID 变了，订阅里只剩一个连不上的死引用。').classes('text-xs text-slate-400')
-                                    with ui.row().classes('justify-end w-full p-4 bg-[#030712] gap-2' if is_dark else 'justify-end w-full p-4 bg-white gap-2'):
-                                        ui.button('取消', on_click=cd.close).props('outline color=grey').classes('text-slate-300 border-slate-600 text-xs font-bold rounded-sm' if is_dark else 'text-slate-600 border-slate-300 text-xs font-bold rounded-sm')
+                            def do_clean(s=sub, dead=list(dead_keys)):
+                                async def apply():
+                                    old = list(s.get('nodes', []) or [])
+                                    kept = [k for k in old if k in all_active_keys]
+                                    s['nodes'] = kept
+                                    await save_subs()
+                                    await load_subs_view()
+                                    safe_notify(f'已清理 {len(old) - len(kept)} 个失效节点', 'positive')
 
-                                        async def confirm_clean():
-                                            removed = 0
-                                            kept = []
-                                            for k in (s.get('nodes', []) or []):
-                                                if k in all_active_keys:
-                                                    kept.append(k)
-                                                else:
-                                                    removed += 1
-                                            s['nodes'] = kept
-                                            await save_subs()
-                                            cd.close()
-                                            await load_subs_view()
-                                            safe_notify(f'已清理 {removed} 个失效节点', 'positive')
+                                confirm_dialog(
+                                    f'清理 {len(dead)} 个失效节点？',
+                                    ['这些节点所在的服务器已被删除，或在 x-ui 里的 ID 变了，'
+                                     '订阅里只剩一个连不上的死引用。',
+                                     '清理只剔除死引用，其余节点的顺序保持不变。'],
+                                    '确认清理', apply, is_dark, 'warn', 'cleaning_services')
 
-                                        ui.button('确认清理', on_click=confirm_clean).props('flat').classes('bg-amber-950/45 text-amber-300 border border-amber-500/45 hover:bg-amber-900/55 font-black rounded-sm px-4' if is_dark else 'bg-amber-100 text-amber-700 border border-amber-300 hover:bg-amber-200 font-black rounded-sm px-4')
-                                cd.open()
+                            action_btn(f'清理失效 {len(dead_keys)}', 'cleaning_services', do_clean,
+                                       'warn', is_dark, '剔除指向已删服务器 / 已变 ID 的节点')
 
-                            ui.button(f'清理失效 ({len(dead_keys)})', icon='cleaning_services', on_click=do_clean) \
-                                .props('flat dense size=sm') \
-                                .classes('rounded-sm px-3 font-black border bg-amber-950/35 text-amber-300 border-amber-500/45 hover:bg-amber-900/50' if is_dark else 'rounded-sm px-3 font-black border bg-amber-100 text-amber-700 border-amber-300 hover:bg-amber-200') \
-                                .tooltip('剔除指向已删服务器 / 已变 ID 的节点')
+                        action_btn('管理', 'tune', lambda s=sub: open_advanced_sub_editor(s), 'muted', is_dark,
+                                   '选节点 / 筛地区 / 重命名 / 预览')
 
-                        ui.button('管理订阅', icon='tune', on_click=lambda _, s=sub: open_advanced_sub_editor(s)) \
-                            .props('flat dense size=sm') \
-                            .classes('rounded-sm px-3 font-black border') \
-                            .style('background: var(--xf-soft-bg); color: var(--xf-accent); border-color: var(--xf-card-border);') \
-                            .tooltip('重命名 / 排序 / 筛选节点')
+                        def do_del(i=idx, s=sub):
+                            tok = s.get('token')
+                            refs = [x.get('name', '未命名') for x in SUBS_CACHE
+                                    if x.get('type') == 'collection' and tok in (x.get('members', []) or [])]
+                            lines = ['删除后这条链接立即失效，已经导入的客户端会拉不到节点。']
+                            if refs:
+                                lines.append('⚠️ 以下组合订阅正在引用它，删掉后它们会少掉这批节点：'
+                                             + '、'.join(refs))
 
-                        async def dl(i=idx):
-                            with ui.dialog() as d, ui.card().classes('w-[360px] p-0 gap-0 overflow-hidden rounded-sm bg-[#070b14] border border-rose-800/55 shadow-[0_18px_48px_rgba(0,0,0,0.78)]' if is_dark else 'w-[360px] p-0 gap-0 overflow-hidden rounded-sm bg-white border border-rose-300 shadow-[0_10px_28px_rgba(148,163,184,0.18)]'):
-                                with ui.column().classes('w-full p-5 gap-3 bg-gradient-to-r from-[#19070d] to-[#0b0911] border-b border-rose-900/60' if is_dark else 'w-full p-5 gap-3 bg-gradient-to-r from-rose-50 to-orange-50 border-b border-rose-200'):
-                                    ui.label('确定删除此订阅？').classes('font-black text-rose-300 text-lg tracking-wide' if is_dark else 'font-black text-rose-700 text-lg tracking-wide')
-                                    # 被别的组合订阅引用时先提醒，否则那条组合订阅会静默少掉一批节点
-                                    tok = SUBS_CACHE[i].get('token')
-                                    refs = [s.get('name', '未命名') for s in SUBS_CACHE
-                                            if s.get('type') == 'collection' and tok in (s.get('members', []) or [])]
-                                    if refs:
-                                        ui.label('⚠️ 以下组合订阅正在引用它：' + '、'.join(refs)).classes('text-xs font-bold text-amber-400')
-                                with ui.row().classes('justify-end w-full mt-4 p-4 bg-[#030712] gap-2' if is_dark else 'justify-end w-full mt-4 p-4 bg-white gap-2'):
-                                    ui.button('取消', on_click=d.close).props('outline color=grey').classes('text-slate-300 border-slate-600 hover:bg-slate-800/40 text-xs font-bold tracking-wide rounded-sm' if is_dark else 'text-slate-600 border-slate-300 hover:bg-slate-100 text-xs font-bold tracking-wide rounded-sm')
+                            async def apply():
+                                del SUBS_CACHE[i]
+                                await save_subs()
+                                await load_subs_view()
+                                safe_notify('已删除', 'positive')
 
-                                    async def confirm():
-                                        del SUBS_CACHE[i]
-                                        await save_subs()
-                                        await load_subs_view()
-                                        d.close()
-                                        safe_notify('已删除', 'positive')
+                            confirm_dialog('确定删除此订阅？', lines, '删除', apply,
+                                           is_dark, 'danger', 'delete_forever')
 
-                                    ui.button('删除', on_click=confirm).props('flat').classes('bg-rose-950/45 text-rose-300 border border-rose-500/45 hover:bg-rose-900/55 font-black rounded-sm px-4' if is_dark else 'bg-rose-100 text-rose-700 border border-rose-300 hover:bg-rose-200 font-black rounded-sm px-4')
-                            d.open()
+                        icon_btn('delete', do_del, 'danger', is_dark, '删除这条订阅')
 
-                        ui.button(icon='delete', on_click=dl).props('flat dense size=sm').classes('text-rose-400 hover:bg-rose-950/30 hover:text-rose-300')
+                def format_buttons():
+                    icon_btn('content_copy', lambda u=raw_url: safe_copy_to_clipboard(u), 'muted', is_dark,
+                             '复制原始链接（按客户端 UA 自动返回对应格式）', size='xs')
+                    icon_btn('bolt', lambda u=f"{origin}/get/sub/surge/{token}": safe_copy_to_clipboard(u),
+                             'warn', is_dark, '复制 Surge 订阅', size='xs')
+                    icon_btn('cloud_queue', lambda u=f"{origin}/get/sub/clash/{token}": safe_copy_to_clipboard(u),
+                             'ok', is_dark, '复制 Clash 订阅', size='xs')
+                    icon_btn('qr_code_2',
+                             lambda n=sub.get('name', '订阅'), p=sub_url_pairs(origin, token):
+                                 open_qr_dialog(n, p),
+                             'node', is_dark, '扫码导入（可切换格式）', size='xs')
 
-                ui.separator().classes('my-3 opacity-80').style('background: var(--xf-card-border);')
+                    with ui.button(icon='more_horiz').props('flat dense round size=xs') \
+                            .style('color: var(--xf-text-muted);').tooltip('全部输出格式'):
+                        # 底色 / 边框不用管：main_page 里有一条全局 .q-menu 规则拿
+                        # !important 设了 --xf-popup-*，这里再写 inline 也是输
+                        with ui.menu().props('auto-close').classes('rounded-sm'):
+                            for t in ordered_targets():
+                                url = f"{origin}/get/sub/{t}/{token}"
+                                ui.menu_item(f"复制 {SUB_TARGETS[t]} 链接",
+                                             on_click=lambda u=url: safe_copy_to_clipboard(u)) \
+                                    .classes('text-xs')
+                            ui.separator()
+                            ui.menu_item('复制原始链接（自适应）',
+                                         on_click=lambda u=raw_url: safe_copy_to_clipboard(u)) \
+                                .classes('text-xs')
 
-                path = f"/sub/{token}"
-                raw_url = f"{origin}{path}"
+                link_bar(raw_url, is_dark, format_buttons, '点击复制原始链接（客户端自适应）')
 
-                with ui.row().classes('w-full items-center gap-2 p-2.5 rounded-sm justify-between border').style('background: var(--xf-code-bg); border-color: var(--xf-card-border);'):
-                    with ui.row().classes('items-center gap-3 flex-grow overflow-hidden'):
-                        ui.icon('link').classes('text-sm').style('color: var(--xf-accent);')
-                        ui.label(raw_url).classes('text-xs font-mono font-bold truncate select-all').style('color: var(--xf-text-strong);')
+        if not SUBS_CACHE:
+            empty_state('rss_feed', '还没有订阅',
+                        '从上面的节点池里勾几个节点建一条订阅，客户端填上链接就能用',
+                        is_dark, 'ok', '新建订阅', 'add', lambda: open_advanced_sub_editor(None))
+        else:
+            group_label('rss_feed', '普通订阅', len(normal_subs), 'sub', is_dark, '手动勾选节点')
+            if not normal_subs:
+                thin_hint('暂无普通订阅。普通订阅是直接勾选节点的那种，组合订阅的成员必须是它。')
+            for idx, sub in normal_subs:
+                render_sub_card(idx, sub)
 
-                    with ui.row().classes('gap-1 items-center flex-shrink-0'):
-                        def btn_copy(icon, color, text, func):
-                            ui.button(icon=icon, on_click=func).props(f'flat dense round size=xs text-color={color}').tooltip(text).style('color: var(--xf-text-muted);')
-
-                        btn_copy('content_copy', 'grey-4', '复制原始链接（按客户端 UA 自动返回对应格式）', lambda u=raw_url: safe_copy_to_clipboard(u))
-
-                        surge_short = f"{origin}/get/sub/surge/{token}"
-                        btn_copy('bolt', 'orange', '复制 Surge 订阅', lambda u=surge_short: safe_copy_to_clipboard(u))
-
-                        clash_short = f"{origin}/get/sub/clash/{token}"
-                        btn_copy('cloud_queue', 'green', '复制 Clash 订阅', lambda u=clash_short: safe_copy_to_clipboard(u))
-
-                        pairs = sub_url_pairs(origin, token)
-
-                        btn_copy('qr_code_2', 'cyan',
-                                 '扫码导入（可切换格式）',
-                                 lambda n=sub.get('name', '订阅'), p=pairs: open_qr_dialog(n, p))
-
-                        with ui.button(icon='more_horiz').props('flat dense round size=xs text-color=grey-4').style('color: var(--xf-text-muted);').tooltip('全部输出格式'):
-                            with ui.menu().props('auto-close').classes('bg-[#070b14] border border-[#1e3a5f]/55' if is_dark else 'bg-white border border-slate-300'):
-                                for t in ordered_targets():
-                                    url = f"{origin}/get/sub/{t}/{token}"
-                                    ui.menu_item(f"复制 {SUB_TARGETS[t]} 链接",
-                                                 on_click=lambda u=url: safe_copy_to_clipboard(u)) \
-                                        .classes('text-xs')
-                                ui.separator()
-                                ui.menu_item('复制原始链接（自适应）',
-                                             on_click=lambda u=raw_url: safe_copy_to_clipboard(u)).classes('text-xs')
-
-        ui.separator().classes('my-6 opacity-80').style('background: var(--xf-card-border);')
-
-        with ui.row().classes(page_header_cls).style(page_header_style):
-            with ui.row().classes('items-center gap-3'):
-                with ui.element('div').classes(page_icon_cls).style(page_icon_style):
-                    ui.element('div').classes('absolute inset-0').style('background: var(--xf-accent-soft);')
-                    ui.icon('hub').classes('text-[18px] drop-shadow-[0_0_5px_currentColor]')
-                ui.label('独立节点管理').classes(page_title_cls).style(page_title_style)
-
-            with ui.row().classes('gap-2'):
-                def open_batch_import():
-                    from app.ui.dialogs.sub_dialogs import open_batch_import_dialog
-                    open_batch_import_dialog()
-
-                ui.button('批量导入', icon='playlist_add', on_click=open_batch_import) \
-                    .props('flat') \
-                    .classes('bg-cyan-950/45 text-cyan-300 border border-cyan-500/45 hover:bg-cyan-900/55 font-black rounded-sm px-4' if is_dark else 'bg-sky-100 text-sky-700 border border-sky-300 hover:bg-sky-200 font-black rounded-sm px-4') \
-                    .tooltip('一次粘贴多条分享链接')
-
-                def open_add_independent_node():
-                    from app.ui.dialogs.sub_dialogs import open_independent_node_editor
-                    open_independent_node_editor(None)
-
-                ui.button('添加独立节点', icon='add', on_click=open_add_independent_node).props('flat').classes('bg-blue-950/45 text-blue-300 border border-blue-500/45 hover:bg-blue-900/55 font-black rounded-sm px-4' if is_dark else 'bg-blue-100 text-blue-700 border border-blue-300 hover:bg-blue-200 font-black rounded-sm px-4')
-
-        if not INDEPENDENT_NODES_CACHE:
-            with ui.column().classes('w-full h-64 justify-center items-center border border-dashed rounded-sm').style('background: var(--xf-panel-bg); border-color: var(--xf-card-border); color: var(--xf-text-muted);'):
-                ui.icon('hub', size='4rem').style('color: var(--xf-accent); opacity: 0.8;')
-                ui.label('暂无独立节点').classes('text-sm font-bold').style('color: var(--xf-text-muted);')
-
-        for idx, inode in enumerate(INDEPENDENT_NODES_CACHE):
-            with ui.card().classes(card_cls).style(card_style):
-                with ui.row().classes('justify-between w-full items-start'):
-                    with ui.column().classes('gap-1'):
-                        with ui.row().classes('items-center gap-2'):
-                            ui.label(inode.get('remark', '未命名节点')).classes('font-black text-lg tracking-wide').style('color: var(--xf-text-strong);')
-                            ui.badge('独立', color='blue').props('outline size=xs').classes('text-blue-300 border-blue-500/45 rounded-sm' if is_dark else 'text-blue-700 border-blue-300 rounded-sm')
-
-                        link = inode.get('_raw_link', '')
-                        protocol = "unknown"
-                        if link:
-                            protocol = link.split('://')[0]
-                        ui.label(f"⚡ 协议: {protocol} | ID: {inode.get('id', 'N/A')}").classes('text-xs font-bold text-slate-500 font-mono')
-
-                        # 被哪些订阅引用了。删之前能看见影响面，不用一条条订阅点开找。
-                        ikey = f"independent|{inode.get('id')}"
-                        used_by = [s.get('name', '未命名') for s in SUBS_CACHE if ikey in (s.get('nodes', []) or [])]
-                        if used_by:
-                            ui.label('🔗 被订阅引用: ' + '、'.join(used_by)).classes('text-[11px] font-mono').style('color: var(--xf-text-muted);')
-
-                    with ui.row().classes('gap-2'):
-                        def edit_inode(node=inode):
-                            from app.ui.dialogs.sub_dialogs import open_independent_node_editor
-                            open_independent_node_editor(node)
-
-                        ui.button('编辑', icon='edit', on_click=edit_inode) \
-                            .props('flat dense size=sm') \
-                            .classes('rounded-sm px-3 font-black border') \
-                            .style('background: var(--xf-soft-bg); color: var(--xf-accent); border-color: var(--xf-card-border);')
-
-                        async def dl_inode(i=idx):
-                            with ui.dialog() as d, ui.card().classes('w-[360px] p-0 gap-0 overflow-hidden rounded-sm bg-[#070b14] border border-rose-800/55 shadow-[0_18px_48px_rgba(0,0,0,0.78)]' if is_dark else 'w-[360px] p-0 gap-0 overflow-hidden rounded-sm bg-white border border-rose-300 shadow-[0_10px_28px_rgba(148,163,184,0.18)]'):
-                                with ui.column().classes('w-full p-5 gap-3 bg-gradient-to-r from-[#19070d] to-[#0b0911] border-b border-rose-900/60' if is_dark else 'w-full p-5 gap-3 bg-gradient-to-r from-rose-50 to-orange-50 border-b border-rose-200'):
-                                    ui.label('确定删除此独立节点？').classes('font-black text-rose-300 text-lg tracking-wide' if is_dark else 'font-black text-rose-700 text-lg tracking-wide')
-                                    ik = f"independent|{INDEPENDENT_NODES_CACHE[i].get('id')}"
-                                    refs = [s.get('name', '未命名') for s in SUBS_CACHE if ik in (s.get('nodes', []) or [])]
-                                    if refs:
-                                        ui.label('⚠️ 以下订阅正在使用它：' + '、'.join(refs)).classes('text-xs font-bold text-amber-400')
-                                with ui.row().classes('justify-end w-full mt-4 p-4 bg-[#030712] gap-2' if is_dark else 'justify-end w-full mt-4 p-4 bg-white gap-2'):
-                                    ui.button('取消', on_click=d.close).props('outline color=grey').classes('text-slate-300 border-slate-600 hover:bg-slate-800/40 text-xs font-bold tracking-wide rounded-sm' if is_dark else 'text-slate-600 border-slate-300 hover:bg-slate-100 text-xs font-bold tracking-wide rounded-sm')
-
-                                    async def confirm():
-                                        del INDEPENDENT_NODES_CACHE[i]
-                                        await save_independent_nodes()
-                                        await load_subs_view()
-                                        d.close()
-                                        safe_notify('已删除独立节点', 'positive')
-
-                                    ui.button('删除', on_click=confirm).props('flat').classes('bg-rose-950/45 text-rose-300 border border-rose-500/45 hover:bg-rose-900/55 font-black rounded-sm px-4' if is_dark else 'bg-rose-100 text-rose-700 border border-rose-300 hover:bg-rose-200 font-black rounded-sm px-4')
-                            d.open()
-
-                        ui.button(icon='delete', on_click=dl_inode).props('flat dense size=sm').classes('text-rose-400 hover:bg-rose-950/30 hover:text-rose-300')
-
-                ui.separator().classes('my-3 opacity-80').style('background: var(--xf-card-border);')
-
-                with ui.row().classes('w-full items-center gap-2 p-2.5 rounded-sm justify-between border').style('background: var(--xf-code-bg); border-color: var(--xf-card-border);'):
-                    with ui.row().classes('items-center gap-3 flex-grow overflow-hidden'):
-                        ui.icon('link').classes('text-sm').style('color: var(--xf-accent);')
-                        ui.label(inode.get('_raw_link', '')).classes('text-xs font-mono font-bold truncate select-all').style('color: var(--xf-text-strong);')
-
-                    with ui.row().classes('gap-1'):
-                        def btn_copy(icon, color, text, func):
-                            ui.button(icon=icon, on_click=func).props(f'flat dense round size=xs text-color={color}').tooltip(text).style('color: var(--xf-text-muted);')
-
-                        btn_copy('content_copy', 'grey-4', '复制节点链接', lambda u=inode.get('_raw_link', ''): safe_copy_to_clipboard(u))
+            group_label('layers', '组合订阅', len(collections), 'group', is_dark, '合并多条订阅的节点')
+            if not collections:
+                thin_hint('暂无组合订阅。在「新建订阅」里打开组合模式，就能把几条订阅合并成一条链接下发。')
+            for idx, sub in collections:
+                render_sub_card(idx, sub)
