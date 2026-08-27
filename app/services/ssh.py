@@ -82,11 +82,6 @@ async def get_ssh_client(server_data):
         return None, f"❌ 连接失败: {detail}"
 
 
-# 兼容之前的名字，防止其他地方报错，现在直接返回 await get_ssh_client
-async def get_ssh_client_sync(server_data):
-    return await get_ssh_client(server_data)
-
-
 class WebSSH:
     def __init__(self, container, server_data, initial_command=None):
         self.container = container
