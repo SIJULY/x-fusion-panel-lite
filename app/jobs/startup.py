@@ -5,17 +5,14 @@ from app.core.state import ADMIN_CONFIG
 from app.jobs.geoip import job_check_geo_ip
 from app.jobs.monitor import job_monitor_status
 from app.jobs.domain_ip_sync import job_sync_domain_ips
-from app.jobs.traffic import job_sync_all_traffic
 
 
 async def startup_sequence():
-    scheduler.add_job(job_sync_all_traffic, 'interval', hours=24, id='traffic_sync', replace_existing=True, max_instances=1)
     scheduler.add_job(job_monitor_status, 'interval', seconds=120, id='status_monitor', replace_existing=True, max_instances=1)
     scheduler.add_job(job_sync_domain_ips, 'interval', hours=1, id='domain_ip_sync', replace_existing=True, max_instances=1)
     scheduler.start()
     logger.info('🕒 APScheduler 定时任务已启动')
 
-    asyncio.create_task(job_sync_all_traffic())
     asyncio.create_task(job_check_geo_ip())
     asyncio.create_task(job_sync_domain_ips())
 

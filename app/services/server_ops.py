@@ -17,7 +17,6 @@ from app.services.manager_factory import get_manager
 from app.services.probe import install_probe_on_server
 from app.services.xui_fetch import fetch_inbounds_safe
 from app.storage.repositories import save_admin_config, save_nodes_cache, save_servers, save_single_server
-from app.utils.async_tools import run_in_bg_executor
 from app.utils.geo import detect_country_group, fetch_geo_from_ip, get_flag_for_country
 
 

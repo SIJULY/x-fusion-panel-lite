@@ -1,10 +1,8 @@
 import asyncio
-import inspect
 
 from app.core.logging import logger
 from app.core.state import NODES_DATA, SYNC_SEMAPHORE
 from app.services.manager_factory import get_manager
-from app.utils.async_tools import run_in_bg_executor
 
 
 def merge_local_node_fields(server_url, fresh_nodes):
@@ -77,8 +75,7 @@ async def fetch_inbounds_safe(server_conf, force_refresh=False, sync_name=False)
     async with SYNC_SEMAPHORE:
         try:
             mgr = get_manager(server_conf)
-            # 增加超时判断。
-            # API 管理器是同步方法，需要丢到线程池；SSH/Root 管理器是 async 方法，必须直接 await。
+            # SSH/Root 管理器是 async 方法，直接 await 并加超时保护。
             # 否则会把 coroutine 对象写入 NODES_DATA，导致单机详情页新增节点后无法静默刷新出真实列表。
             inbounds = await asyncio.wait_for(mgr.get_inbounds(), timeout=15)
 

@@ -297,8 +297,6 @@ async def probe_register(request: Request):
                 'name': f"🏳️ {client_ip}",
                 'group': '自动注册',
                 'url': f"http://{client_ip}:54321",
-                'user': 'admin',
-                'pass': 'admin',
                 'ssh_auth_type': '全局密钥',
                 'probe_installed': True,
                 '_status': 'online',
@@ -383,13 +381,12 @@ async def auto_register_node(request: Request):
 
         ip = data.get('ip')
         port = data.get('port')
-        username = data.get('username')
-        password = data.get('password')
         alias = data.get('alias', f'Auto-{ip}')
 
         ssh_port = data.get('ssh_port', 22)
 
-        if not all([ip, port, username, password]):
+        # 面板凭据已不再使用；老调用方即使继续发送 username/password 也只会被忽略
+        if not all([ip, port]):
             return Response(json.dumps({"success": False, "msg": "参数不完整"}), status_code=400, media_type="application/json")
 
         target_url = f"http://{ip}:{port}"
@@ -398,9 +395,6 @@ async def auto_register_node(request: Request):
             'name': alias,
             'group': '默认分组',
             'url': target_url,
-            'user': username,
-            'pass': password,
-            'prefix': '',
             'ssh_port': ssh_port,
             'ssh_auth_type': '全局密钥',
             'ssh_user': 'detecting...',

@@ -6,7 +6,7 @@ from nicegui import run, ui
 from app.core.logging import logger
 from app.core.state import ADMIN_CONFIG, NODES_DATA, PROBE_DATA_CACHE, SERVERS_CACHE
 from app.services.cloudflare import CloudflareHandler
-from app.services.manager_factory import get_manager
+from app.services.manager_factory import get_manager, has_ssh_target
 from app.services.ssh import _ssh_exec_wrapper, get_ssh_client
 from app.services.traffic_guard import (
     ensure_traffic_limit_cycle,
@@ -96,8 +96,7 @@ async def render_single_server_view(server_conf, force_refresh=False):
         # 📌 布局隔离舱：创建一个专属的 wrapper 来接管高度和滚动，防止样式泄露到其他页面
         with ui.element('div').classes('xf-single-server-shell w-full flex flex-col justify-start items-stretch overflow-y-auto'):
             with ui.element('div').classes('xf-single-server-inner w-full max-w-[1440px] mx-auto flex flex-col gap-4 flex-nowrap'):
-                has_manager_access = (server_conf.get('url') and server_conf.get('user') and server_conf.get('pass')) or (
-                        server_conf.get('probe_installed') and server_conf.get('ssh_host'))
+                has_manager_access = has_ssh_target(server_conf)
                 mgr = None
                 if has_manager_access:
                     try:
@@ -306,13 +305,6 @@ PY'''
                         if 'is_3x_ui' in remote_data and server_conf.get('is_3x_ui') != remote_data['is_3x_ui']:
                             server_conf['is_3x_ui'] = remote_data['is_3x_ui']
                             need_save = True
-
-                        if 'xui_path' in remote_data:
-                            detected_prefix = f"/{remote_data['xui_path']}" if remote_data['xui_path'] else ""
-                            if server_conf.get('prefix') != detected_prefix:
-                                server_conf['prefix'] = detected_prefix
-                                need_save = True
-                                logger.info(f"[AutoDetect] Server path automatically self-healed to: '{detected_prefix}'")
 
                         if need_save:
                             asyncio.create_task(save_servers())
@@ -1052,12 +1044,11 @@ PY'''
                     else:
                         for n in all_nodes:
                             is_custom = n.get('_is_custom', False)
-                            is_ssh_mode = (not is_custom) and (
-                                    server_conf.get('probe_installed') and server_conf.get('ssh_host'))
 
                             row_tech_cls = 'grid w-full gap-4 py-2.5 px-3 mb-2 items-center group border border-l-[3px] transition-all duration-300 cursor-default rounded-sm relative overflow-hidden'
                             row_overlay_cls = 'absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none'
-                            row_accent = '#a855f7' if is_custom else ('#14b8a6' if is_ssh_mode else '#3b82f6')
+                            # API 引擎已移除，非自定义节点一律来自 SSH 直连
+                            row_accent = '#a855f7' if is_custom else '#14b8a6'
                             row_shadow = f'0 0 0 1px color-mix(in srgb, {row_accent} 18%, transparent), 0 0 16px color-mix(in srgb, {row_accent} {38 if is_dark else 16}%, transparent), 0 6px 18px rgba(15,23,42,0.10)'
                             with ui.element('div').classes(row_tech_cls).style(
                                     f'{SINGLE_COLS_NO_PING} background: var(--xf-soft-bg); border-color: var(--xf-card-border); border-left-color: {row_accent}; box-shadow: {row_shadow};'):
@@ -1069,12 +1060,9 @@ PY'''
                                 if is_custom:
                                     ui.label('独立').classes(
                                         'text-[10px] text-purple-400 font-black w-full text-center tracking-wider relative z-10')
-                                elif is_ssh_mode:
+                                else:
                                     ui.label('Root').classes(
                                         'text-[10px] text-teal-400 font-black w-full text-center tracking-wider relative z-10')
-                                else:
-                                    ui.label('API').classes(
-                                        'text-[10px] text-blue-300 font-black w-full text-center tracking-wider relative z-10')
 
                                 traffic = format_bytes(n.get('up', 0) + n.get('down', 0)) if not is_custom else '--'
                                 ui.label(traffic).classes(
@@ -1227,14 +1215,11 @@ PY'''
                             new_nodes = fetched_nodes
                             fetch_success = True
                     except Exception as e:
-                        logger.warning(f"API 获取节点失败: {e}")
+                        logger.warning(f"节点同步失败: {e}")
 
                     if not fetch_success and mgr and hasattr(mgr, '_exec_remote_script'):
                         try:
-                            if not asyncio.iscoroutinefunction(mgr.get_inbounds):
-                                ssh_nodes = await run.io_bound(lambda: asyncio.run(mgr.get_inbounds()))
-                            else:
-                                ssh_nodes = await mgr.get_inbounds()
+                            ssh_nodes = await mgr.get_inbounds()
 
                             if ssh_nodes is not None:
                                 new_nodes = ssh_nodes
@@ -1794,7 +1779,7 @@ PY'''
                             ui.icon('hub').classes('text-blue-500 drop-shadow-[0_0_5px_rgba(59,130,246,0.8)]')
                             ui.label('节点列表').classes(
                                 'text-sm font-black tracking-wider text-slate-200' if is_dark else 'text-sm font-black tracking-wider text-slate-800')
-                            if server_conf.get('probe_installed') and server_conf.get('ssh_host'):
+                            if has_ssh_target(server_conf):
                                 ui.badge('Root 模式', color='teal').props('outline rounded-sm').classes(
                                     'text-[10px] font-bold tracking-wider shadow-[0_0_5px_rgba(20,184,166,0.3)] ml-2')
 

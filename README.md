@@ -1,9 +1,11 @@
 # X-Fusion Panel Lite
 
-> 本仓库是 [x-fusion-panel](https://github.com/SIJULY/x-fusion-panel) 的**精简版本**，在原项目基础上移除了三块功能：
+> 本仓库是 [x-fusion-panel](https://github.com/SIJULY/x-fusion-panel) 的**精简版本**，在原项目基础上移除了五块功能：
 > 1. 公开监控墙（`/status` 公共状态页，含桌面端与移动端两套渲染）及其配套的三网延迟测速；
 > 2. 添加服务器时的 API（X-UI 面板）添加模式，现在只保留 SSH 添加模式；
-> 3. 独立的「探针设置」页面，主控端地址与 Telegram 通知已合并进侧边栏的「探针与通知设置」弹窗。
+> 3. 独立的「探针设置」页面，主控端地址与 Telegram 通知已合并进侧边栏的「探针与通知设置」弹窗；
+> 4. GitHub 云备份与 OAuth 授权，备份恢复只保留本地 JSON 方式；
+> 5. X-UI 面板 HTTP API 引擎（`XUIManager` / `HybridManager`），节点读写统一走 SSH 直连远程数据库。
 >
 > 其余能力（WebSSH、文件管理、探针、订阅、一键部署、Cloudflare 联动、手机端 SSH 入口等）与原项目一致。安装目录与容器名均带 `-lite` 后缀，可与原版共存。
 
@@ -46,6 +48,36 @@ X-Fusion Panel Lite 是一个面向 **多服务器运维 / VPS 管理 / 节点�
 ---
 
 ## 更新记录
+
+### 2026-08-27
+- **精简**：移除 **X-UI 面板 HTTP API 引擎**，节点读写只保留 SSH 直连远程数据库这一条通道。
+- 删除 `app/services/xui_api.py`（223 行，整个文件）：`XUIManager` 的登录、`get_inbounds`、增删改节点等全部 HTTP API 实现。
+- `app/services/manager_factory.py` 从 120 行压到 37 行：删掉 `HybridManager`（SSH 优先 + API 兜底的双引擎包装层，四个方法结构完全重复），`get_manager()` 现在直接返回 `SSHXUIManager`；条件不满足时抛出明确异常，由调用方降级展示。
+- 删除 `app/jobs/traffic.py`（80 行，整个文件）与启动时的 `traffic_sync` 定时任务：这个 24h「智能同步」轮询会跳过所有带探针的机器，只对没探针的机器走面板 API；API 引擎移除后它已无事可做。随之清掉 `sync_job_index` / `sync_job_start` 两个配置项。
+- 删除 `app/utils/async_tools.py`（8 行，整个文件）与 `app/core/logging.py` 中的 `BG_EXECUTOR`：这条「把同步 API 方法丢进线程池」的链路 `run_in_bg_executor` 零调用，只剩两个孤儿导入。现在启动不再多开 20 个空闲线程。
+- 顺带修好一处长期失效的分支：单机详情页的 SSH 兜底门卫是 `hasattr(mgr, '_exec_remote_script')`，而 `HybridManager` 并没有这个属性，所以这段兜底一直进不去；换成 `SSHXUIManager` 后它才真正生效，同时删掉专为同步 API 方法准备的 `asyncio.run` 分支。
+- 不再写入面板凭据：`auto_register_node` 不再存 `user` / `pass` / `prefix`，`probe_register` 不再塞死 `admin/admin`，单机页也不再自愈 `prefix`（原读者只有已删除的 `XUIManager`）。
+- 修掉一处会被 API 移除放大的判定过严问题：原 `HybridManager` 要求 `probe_installed` **且** 填了 `ssh_host` 才建 SSH 引擎，而 `app/services/ssh.py` 本身在 `ssh_host` 为空时会从 `url` 解析主机名。以前这个偏严的门槛无所谓（API 会接住），API 移除后会让探针自注册进来的机器（有探针但没写 `ssh_host`）彻底没有引擎可用。现在统一收敛到 `has_ssh_target()`：要求有探针，且 `ssh_host` / `url` 至少有一个。
+- 单机页节点行不再显示「API」标签与蓝色配色（这两个分支已不可能成立），非自定义节点一律标为「Root」。
+- **接口变更**：`POST /api/auto_register_node` 的必填参数从 `ip` / `port` / `username` / `password` 收窄为 `ip` / `port`；老调用方继续发送 `username` / `password` 也不会报错，只会被忽略。
+- **注意**：这条取代了 2026-08-26 的说明——`data/servers.json` 里老记录的 `user` / `pass` / `prefix` 字段不会被删除，但**已经彻底没有读者**，SSH 不可用时不再有 API 兜底。节点管理现在要求该服务器已安装探针且 SSH 可连。
+- **精简**：移除 **GitHub 云备份与 OAuth 授权**，备份恢复只保留本地 JSON 方式。
+- 删除 `app/services/github_backup.py`（332 行，整个文件）：仓库/目录管理、OAuth 授权流程、access token 存取、备份上传与下载等 26 个函数。其中 `upload_backup_to_github` 与 `download_latest_backup_from_github` 本就零调用。
+- 删除 `app/api/github_oauth.py`（87 行，整个文件）与 `main.py` 中的两条路由 `GET /api/github/oauth/start`、`GET /api/github/oauth/callback`。
+- 这条链是独立死链：`github_backup.py` 只被 `api/github_oauth.py` 引用，后者只被 `main.py` 引用，`app/ui/` 零引用——界面上从来没有入口。
+- 随之不再写入 `github_access_token` / `github_client_id` / `github_client_secret` / `github_oauth_state` / `github_user_login` 等 10 个配置项。
+- 结果：Python 文件数 71 → 66，`app/` 总行数 16,554 → 15,700（两步净减 **854 行与 5 个文件**；删除量为 872 行，另新增 18 行用于 `has_ssh_target()` 与注释）；`main.py` 111 → 100 行，`manager_factory.py` 120 → 37 行。
+
+### 2026-08-27
+- **精简**：清理全项目零调用死代码，共移除 **259 行与 3 个文件**（其中定义与逻辑 251 行，另含 7 行空行分隔与 1 行孤儿导入），不改变任何功能行为。
+- 删除旧版订阅编辑器 `SubEditor` 与 `open_sub_editor`（`sub_dialogs.py`，196 行）：订阅页实际只走 `AdvancedSubEditor`，旧编辑器早已被架空且零调用；随之清掉因此变成孤儿的 `fetch_inbounds_safe` 导入。
+- 删除重复的 `open_create_group_dialog`（`group_dialogs.py`，37 行）：侧边栏新建分组走的是 `open_quick_group_create_dialog`，两者功能重复。
+- 删除 `app/ui/components/status_cards.py`（14 行，整个文件）：第一步移除公开监控墙后遗留的空壳，全项目连 import 都没有。
+- 删除 `get_ssh_client_sync`（`services/ssh.py`，2 行）：只是 `await get_ssh_client()` 的转发，零调用，且名字里的 `sync` 早已不成立。
+- 删除 `app/api/probe.py`（1 行，整个文件）：一行转发 import，没有任何模块引用它，`main.py` 直接从 `app.services.probe` 取函数。
+- 删除 `app/core/security.py`（空文件）：模块化迁移期留下的占位文件，从未写入内容。
+- 删除 `main.py` 中未使用的 `send_telegram_message` 导入：真正的调用方是 `jobs/monitor.py` 与 `services/traffic_guard.py`，各自已有导入。
+- 结果：Python 文件数 74 → 71，`app/` 总行数 16,813 → 16,554；`sub_dialogs.py` 621 → 422 行，`group_dialogs.py` 392 → 353 行，`services/ssh.py` 540 → 535 行。
 
 ### 2026-08-26
 - **精简**：移除独立的「探针设置」页面，侧边栏不再有该入口。
@@ -185,8 +217,7 @@ python app/main.py
 |---|---|---|
 | 多服务器管理 | ✅ | 支持分组、聚合、单机详情、地区识别 |
 | 添加服务器 | ✅ | 仅 SSH 模式（单台添加 / 批量添加），保存后自动推送探针 |
-| 面板 API 接入 | ⚠️ 仅兼容旧数据 | 已不能通过界面新增/编辑面板凭据；老记录中的 `user`/`pass`/`prefix` 仍可作为 SSH 不可用时的兜底 |
-| Root / SSH 管理 | ✅ | 支持 SSH 模式与探针模式结合 |
+| Root / SSH 管理 | ✅ | 节点读写统一走 SSH 直连远程 X-UI 数据库，要求已安装探针 |
 | WebSSH | ✅ | 内置浏览器终端 |
 | 手机端 SSH 管理 | ✅ | `/m` / `/mobile` 入口，登录后仅保留 VPS 状态、账号列表、SSH 端口与终端能力 |
 | 远程文件管理 | ✅ | 上传、下载、编辑、删除、重命名、chmod |
@@ -197,8 +228,7 @@ python app/main.py
 | 一键部署协议 | ✅ | XHTTP-Reality / Hysteria2 / Snell v5 |
 | 独立节点管理 | ✅ | 支持单独添加通过其他渠道获取的各种代理协议节点 |
 | Cloudflare 联动 | ✅ | 自动解析、域名列表、删除记录 |
-| JSON 备份恢复 | ✅ | 导出、恢复、批量导入 |
-| GitHub 云备份代码 | ⚠️ 部分集成 | 仓库内已有服务代码，主流程仍以本地备份为主 |
+| JSON 备份恢复 | ✅ | 导出、恢复、批量导入（本地 JSON，无云端依赖） |
 | MFA / 会话安全 | ✅ | TOTP、设备指纹、异地检测、强制下线 |
 
 ---
@@ -239,8 +269,8 @@ python app/main.py
 
 ### 2. 多模式节点运维
 - 添加服务器只走 **SSH 模式**（单台添加与批量添加都只需要 SSH 主机、用户、端口和认证方式）
-- 支持通过 **SSH / SQLite / Root 模式** 管理节点
-- 对于历史数据中仍带有面板凭据的服务器，SSH 不可用时会自动回退到面板 HTTP API 读取
+- 节点读写统一走 **SSH 直连远程 X-UI 数据库**（`SSHXUIManager`），要求该服务器已安装探针且 SSH 可连
+- 支持非 root 用户 sudo 提权操作数据库，自动探测 `3x-ui` / `x-ui` 的数据库路径
 - 支持节点新增、修改、删除、复制链接、复制明文配置
 - 支持自定义节点与面板节点混合展示
 - X-UI 兼容能力只是其中一部分，而不是项目唯一定位
@@ -392,7 +422,7 @@ project/
 │  ├─ utils/                             # 编码、格式化、Geo、网络工具
 │  └─ ui/
 │     ├─ common/                         # 公共通知 / 设置弹窗 / 数据管理弹窗
-│     ├─ components/                     # 仪表盘、侧边栏、状态卡片等组件
+│     ├─ components/                     # 仪表盘、侧边栏等组件
 │     ├─ dialogs/                        # 服务器、节点、订阅、分组、部署、SSH 等弹窗
 │     └─ pages/                          # 登录页、主页面、订阅页、单机页
 │
@@ -492,7 +522,7 @@ chmod +x install.sh
 ### 探针 / 自动注册
 - `POST /api/probe/register`
 - `POST /api/probe/push`
-- `POST /api/auto_register_node`
+- `POST /api/auto_register_node`：必填 `secret` / `ip` / `port`，可选 `alias` / `ssh_port`（`username` / `password` 已废弃，发送也会被忽略）
 
 ### 订阅
 - `GET /sub/{token}`：原始订阅
@@ -564,7 +594,7 @@ Docker 容器默认：
 - 当前仓库已经完成从单文件结构向模块化结构的迁移
 - 仓库内包含部分历史迁移辅助文件，用于索引和拆分参考
 - 当前主维护方向以 `app/` 目录下模块化代码为准
-- 仓库中还包含 GitHub 备份相关服务代码与 OAuth 处理模块，当前主流程仍以本地 JSON 备份/恢复为主
+- 备份恢复只有本地 JSON 一条路径，仓库内不再包含任何云端备份或 OAuth 相关代码
 
 ---
 
@@ -582,7 +612,7 @@ Docker 容器默认：
 
 添加服务器时只需要 SSH 凭据，之后：
 - 通过 SSH / Root / 探针模式读写节点与系统信息
-- 对于历史数据中仍带有面板凭据的服务器，SSH 不通时会自动回退到面板 API
+- 节点的增删改查都是 SSH 直连远程 X-UI 数据库，不依赖面板的 HTTP 接口是否可达
 
 所以它不是某一个面板的简单皮肤，而是一个更偏“运维控制台”的系统。
 
