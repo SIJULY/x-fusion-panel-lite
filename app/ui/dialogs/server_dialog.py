@@ -195,6 +195,34 @@ async def open_server_dialog(idx=None):
     original_data = SERVERS_CACHE[idx] if is_edit else {}
     data = original_data.copy()
 
+    # Pre-process IP/Domain split to correct wrong assignment
+    import re
+    def is_ipv4_or_ipv6(address: str) -> bool:
+        if not address:
+            return False
+        if re.match(r'^(\d{1,3}\.){3}\d{1,3}$', address):
+            return True
+        if ':' in address and '.' not in address:
+            return True
+        return False
+
+    temp_host = data.get('ssh_host')
+    if not temp_host and is_edit:
+        if '://' in data.get('url', ''):
+            temp_host = data.get('url', '').split('://')[-1].split(':')[0]
+        else:
+            temp_host = data.get('url', '').split(':')[0]
+
+    if temp_host and not is_ipv4_or_ipv6(temp_host):
+        if not data.get('cf_primary_domain'):
+            data['cf_primary_domain'] = temp_host
+        try:
+            resolved_ip = socket.gethostbyname(temp_host)
+            data['ssh_host'] = resolved_ip
+        except Exception:
+            # If resolution fails, we still want it out of the IP field
+            data['ssh_host'] = ''
+
     theme = _server_dialog_theme()
 
     with ui.dialog() as d, ui.card().classes(theme['card']):
@@ -331,6 +359,25 @@ async def open_server_dialog(idx=None):
                     init_host = data.get('url', '').split('://')[-1].split(':')[0]
                 else:
                     init_host = data.get('url', '').split(':')[0]
+
+            # If the user didn't explicitly set cf_primary_domain, but ssh_host/url contains a domain name
+            # instead of an IP address, we should separate them: IP goes to ssh_host, domain to cf_primary_domain.
+            # But the requirement says: if it's currently showing a domain in SSH Host IP, that's wrong.
+            # "This domain should be shown in the second input (Cloudflare main domain), here it should only show the IP".
+            # We can detect if init_host is a domain (not an IP).
+            
+            # Simple check if it's an IP: contains only numbers and dots
+            import re
+            is_ip = re.match(r'^[\d\.]+$', init_host or '')
+            
+            # Since the dialog is already rendering, changing the value here is good.
+            # Actually we can do it even earlier before creating the cf_primary_domain input?
+            # Or we can just dynamically sync them? No, we just fix the UI.
+            # Wait, `init_host` is calculated here at line 328.
+            # But wait, `cf_primary_domain_input` was already created at line 255.
+            # Oh, `cf_primary_domain_input.value` is already bound to `data.get('cf_primary_domain')`.
+            # If the initial data has `ssh_host` set to a domain, it will appear here.
+            # Let's fix this in the data parsing block or initialization block.
 
             inputs['ssh_host'] = ui.input(label='SSH 主机 IP', value=init_host).classes('w-full').props(theme['input'])
 
