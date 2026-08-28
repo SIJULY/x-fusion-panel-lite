@@ -38,6 +38,37 @@ from app.utils.geo import get_flag_for_country
 # 为避免当前迁移阶段的循环导入，保持在函数内部按需导入。
 
 
+# 推送间隔的合法区间与默认值。
+# 下限 60 秒：再密就回到「为探针指标服务」的老节奏，而精简版不需要，
+# 且软路由上每台每 5 秒一次实测能把面板容器顶到 20-42% CPU。
+# 上限 6 小时：用户自己划的范围上界；再长的话「服务器离线」这件事
+# 要半天才能发现，判活就彻底失去意义了。
+PUSH_INTERVAL_MIN = 60
+PUSH_INTERVAL_MAX = 21600
+PUSH_INTERVAL_DEFAULT = 1800
+
+
+def probe_push_interval():
+    """agent 应该每隔多少秒推一次。非法值一律回落到默认值。"""
+    try:
+        interval = int(ADMIN_CONFIG.get('probe_push_interval') or PUSH_INTERVAL_DEFAULT)
+    except (TypeError, ValueError):
+        return PUSH_INTERVAL_DEFAULT
+    return max(PUSH_INTERVAL_MIN, min(PUSH_INTERVAL_MAX, interval))
+
+
+def probe_offline_after():
+    """探针多久没推就算离线。
+
+    = 推送间隔 × 2 + 60 秒：容忍偶发丢一次推送（网络抖动、CF 边缘 503），
+    再加一点余量覆盖 agent 侧采样耗时（get_info 自带 1 秒 CPU 采样）和时钟漂移。
+
+    这个式子对**任何**间隔都成立，所以灰度期间新面板配旧 agent（还在 5 秒推）
+    只会显得格外新鲜，不会误报离线——这是能先更面板、后更 agent 的前提。
+    """
+    return probe_push_interval() * 2 + 60
+
+
 async def install_probe_on_server(server_conf):
     name = server_conf.get('name', 'Unknown')
     auth_type = server_conf.get('ssh_auth_type', '全局密钥')
@@ -56,6 +87,7 @@ async def install_probe_on_server(server_conf):
         .replace("__MANAGER_URL__", manager_url) \
         .replace("__TOKEN__", my_token) \
         .replace("__SERVER_URL__", server_conf['url']) \
+        .replace("__PUSH_INTERVAL__", str(probe_push_interval())) \
         .replace("__AGENT_SCRIPT__", PROBE_AGENT_SCRIPT) \
         .replace("__AGENT_NAME__", PROBE_AGENT_NAME) \
         .replace("__LEGACY_AGENT_SCRIPT__", PROBE_LEGACY_AGENT_SCRIPT) \
@@ -152,7 +184,7 @@ async def get_server_status(server_conf):
     if server_conf.get('probe_installed', False) or raw_url in PROBE_DATA_CACHE:
         cache = PROBE_DATA_CACHE.get(raw_url)
         if cache:
-            if time.time() - cache.get('last_updated', 0) < 15:
+            if time.time() - cache.get('last_updated', 0) < probe_offline_after():
                 return cache
             else:
                 return {'status': 'offline', 'msg': '探针离线 (超时)'}
@@ -259,7 +291,10 @@ async def probe_push_data(request: Request):
 
             asyncio.create_task(check_and_handle_traffic_limit(target_server, data))
 
-        return Response("OK", 200)
+        # 响应体里带上期望的推送间隔，agent 会用它当下次 sleep 的秒数。
+        # 这样改间隔只需要在面板里改个数字，不用再 SSH 重装所有 VPS。
+        # 老版本 agent 只判断请求是否成功、不读响应体，多出来的数字会被忽略。
+        return Response(f"OK {probe_push_interval()}", 200)
     except Exception:
         return Response("Error", 500)
 

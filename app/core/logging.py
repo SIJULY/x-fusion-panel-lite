@@ -23,6 +23,9 @@ logging.getLogger('nicegui').setLevel(logging.INFO)
 logging.getLogger('asyncssh').setLevel(logging.WARNING)
 # tzlocal 在 DEBUG 级别会打 /etc/localtime 的探测过程，纯噪音
 logging.getLogger('tzlocal').setLevel(logging.WARNING)
+# httpx 每发一个请求都在 INFO 打一行 `HTTP Request: GET ... "200 OK"`。Cloudflare
+# 那套调用一次能刷十几行，把真正要看的日志顶走，而请求成功与否调用方本来就会自己报。
+logging.getLogger('httpx').setLevel(logging.WARNING)
 
 
 def scrub(value):

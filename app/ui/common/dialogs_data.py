@@ -49,7 +49,7 @@ from app.ui.common.notifications import safe_copy_to_clipboard, safe_notify
 # 新增设置项时记得同步加进来，否则该项无法通过备份恢复。
 _LIVE_CONFIG_KEYS = {
     'admin_username', 'admin_password', 'mfa_secret', 'setup_completed', 'session_version',
-    'manager_base_url', 'probe_enabled', 'probe_token',
+    'manager_base_url', 'probe_enabled', 'probe_token', 'probe_push_interval',
     'pref_ssh_user', 'pref_ssh_port', 'quick_commands',
     'custom_groups', 'group_order',
     'tg_bot_token', 'tg_chat_id',

@@ -1,6 +1,48 @@
+import asyncio
+import time
+
 import httpx
 
 from app.core.state import ADMIN_CONFIG
+
+# 进程级共享的 httpx 客户端，按 (事件循环, token, email) 索引。
+#
+# 以前每个 CF 方法结尾都是 `finally: await self.close()`：调一次 API 就把连接池
+# 连同 TLS 会话一起丢掉，下一次从 TCP 握手重来。实测「打开详情页」那一串调用里，
+# 同一方法内连续两个请求间隔 258-295ms，而跨方法要 615-968ms —— 差出来的
+# 350-700ms 全是白扔的握手。域名解析改成交互式之后，这笔开销会直接变成用户
+# 打开页面时的等待，所以必须复用。
+#
+# 键里带事件循环 id：httpx 的连接池绑在创建它的 loop 上，换了 loop（单测里
+# 每个 asyncio.run 都是新的）必须重建，否则复用会拿到已经废掉的连接。
+_CLIENTS = {}
+
+# Zone 列表缓存，按 (token, email) 索引，值是 (时间戳, zones)。
+#
+# get_zone_id 无条件先调 list_zones()，而打开一次详情页会经由
+# load_cloudflare_records / list_a_records_by_ip / get_a_record_ip_by_domain
+# 反复走到这里。zone 列表是账号级的、几乎不变，缓存 10 分钟足够；
+# 设置页那个「刷新域名」按钮走 use_cache=False，用户手点时永远拿实时的。
+_ZONE_CACHE = {}
+_ZONE_CACHE_TTL = 600
+
+
+def invalidate_cf_cache():
+    """token / 根域名改动后调用：清掉 zone 缓存并弃用旧客户端。
+
+    换了 token 就是换了账号，能看到的 zone 完全不同，缓存必须作废。
+    旧客户端的 aclose 是 async 的，这里只能丢引用 + 尽力异步关闭；
+    丢掉引用之后它不会再被任何调用取到，剩下的连接由 httpx 自己回收。
+    """
+    _ZONE_CACHE.clear()
+    stale = list(_CLIENTS.values())
+    _CLIENTS.clear()
+    for c in stale:
+        try:
+            if not c.is_closed:
+                asyncio.get_running_loop().create_task(c.aclose())
+        except Exception:
+            pass
 
 
 class CloudflareHandler:
@@ -9,18 +51,39 @@ class CloudflareHandler:
         self.email = ADMIN_CONFIG.get('cf_email', '')
         self.root_domain = ADMIN_CONFIG.get('cf_root_domain', '')
         self.base_url = "https://api.cloudflare.com/client/v4"
-        self._client = None
+
+    def _cache_key(self):
+        return (self.token, self.email)
 
     @property
     def client(self):
-        if self._client is None:
-            self._client = httpx.AsyncClient(headers=self._headers(), timeout=15.0)
-        return self._client
+        try:
+            loop_id = id(asyncio.get_running_loop())
+        except RuntimeError:
+            loop_id = 0
+        key = (loop_id,) + self._cache_key()
+        c = _CLIENTS.get(key)
+        if c is None or c.is_closed:
+            c = httpx.AsyncClient(headers=self._headers(), timeout=15.0)
+            _CLIENTS[key] = c
+        return c
 
     async def close(self):
-        if self._client:
-            await self._client.aclose()
-            self._client = None
+        """关掉本 token 对应的共享客户端。
+
+        **单次 API 调用不要调它** —— 那正是以前每次都重新握手的原因。
+        只有换 token（invalidate_cf_cache）或进程收尾时才需要。
+        """
+        try:
+            loop_id = id(asyncio.get_running_loop())
+        except RuntimeError:
+            loop_id = 0
+        c = _CLIENTS.pop((loop_id,) + self._cache_key(), None)
+        if c is not None and not c.is_closed:
+            try:
+                await c.aclose()
+            except Exception:
+                pass
 
     def _headers(self):
         h = {"Content-Type": "application/json"}
@@ -65,9 +128,16 @@ class CloudflareHandler:
         except Exception as e:
             return None, str(e)
 
-    async def list_zones(self):
+    async def list_zones(self, use_cache=True):
         if not self.token:
             return False, "未配置 Cloudflare Token"
+
+        key = self._cache_key()
+        if use_cache:
+            hit = _ZONE_CACHE.get(key)
+            if hit and time.time() - hit[0] < _ZONE_CACHE_TTL:
+                # 复制一层，别让调用方改到缓存里的列表
+                return True, list(hit[1])
 
         url = f"{self.base_url}/zones?per_page=100"
         try:
@@ -84,6 +154,7 @@ class CloudflareHandler:
                     zones.append({'id': zone_id, 'name': name})
 
             zones.sort(key=lambda x: x.get('name', ''))
+            _ZONE_CACHE[key] = (time.time(), list(zones))
             return True, zones
         except Exception as e:
             return False, str(e)
@@ -131,8 +202,6 @@ class CloudflareHandler:
                 return False, f"CF API 报错: {r.text}"
         except Exception as e:
             return False, str(e)
-        finally:
-            await self.close()
 
     async def get_a_record_ip_by_domain(self, domain):
         if not self.token or not domain:
@@ -155,8 +224,6 @@ class CloudflareHandler:
             return False, "未找到 A 记录"
         except Exception as e:
             return False, str(e)
-        finally:
-            await self.close()
 
     async def list_a_records_by_ip(self, ip):
         if not self.token:
@@ -217,8 +284,6 @@ class CloudflareHandler:
             return True, matched
         except Exception as e:
             return False, str(e)
-        finally:
-            await self.close()
 
     async def list_all_a_records(self):
         if not self.token:
@@ -275,8 +340,6 @@ class CloudflareHandler:
             return True, records
         except Exception as e:
             return False, str(e)
-        finally:
-            await self.close()
 
     async def create_a_record(self, record_name, zone_name, ip, proxied=False):
         if not self.token:
@@ -309,8 +372,6 @@ class CloudflareHandler:
             return False, f"CF API 报错: {data}"
         except Exception as e:
             return False, str(e)
-        finally:
-            await self.close()
 
     async def update_a_record(self, record_id, record_name, zone_name, ip, proxied=False):
         if not self.token:
@@ -345,8 +406,6 @@ class CloudflareHandler:
             return False, f"CF API 报错: {data}"
         except Exception as e:
             return False, str(e)
-        finally:
-            await self.close()
 
     async def delete_record_by_id(self, record_id, zone_name):
         if not self.token:
@@ -369,8 +428,6 @@ class CloudflareHandler:
             return False, f"删除失败: {data}"
         except Exception as e:
             return False, str(e)
-        finally:
-            await self.close()
 
     async def delete_record_by_domain(self, domain_to_delete):
         if not self.token:
@@ -407,5 +464,3 @@ class CloudflareHandler:
 
         except Exception as e:
             return False, str(e)
-        finally:
-            await self.close()

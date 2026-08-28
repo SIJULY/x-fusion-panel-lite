@@ -541,6 +541,13 @@ MANAGER_URL = "__MANAGER_URL__/api/probe/push"
 TOKEN = "__TOKEN__"
 SERVER_URL = "__SERVER_URL__"
 
+# 推送间隔（秒）。这里烧进去的只是**兜底默认值**：面板会在每次推送的响应体里
+# 回传它当前期望的间隔，agent 以那个为准。所以在面板里改间隔立即生效，
+# 不需要重新 SSH 安装。只有在面板响应不可解析时才用这个值。
+PUSH_INTERVAL = __PUSH_INTERVAL__
+PUSH_INTERVAL_MIN = 60
+PUSH_INTERVAL_MAX = 21600
+
 ssl_ctx = ssl.create_default_context()
 ssl_ctx.check_hostname = False
 ssl_ctx.verify_mode = ssl.CERT_NONE
@@ -698,14 +705,32 @@ def get_info():
     except: pass
     return data
 
+def parse_interval(body, fallback):
+    # 从面板响应体里取推送间隔，响应形如 "OK 1800"。
+    # 取不到就返回 fallback（调用方传的是上一次拿到的值，不是烧进去的默认值）——
+    # 这样面板万一临时回退成只返回 "OK"，agent 也不会退回高频推送。
+    # 注意：这里不能写三引号 docstring —— 整个 agent 脚本是面板侧一个原始字符串
+    # 字面量的一部分，一个三引号就会把它提前截断（面板直接语法错误起不来）。
+    try:
+        parts = body.split()
+        if len(parts) >= 2:
+            n = int(parts[1])
+            if n > 0:
+                return max(PUSH_INTERVAL_MIN, min(PUSH_INTERVAL_MAX, n))
+    except: pass
+    return fallback
+
 def push():
+    interval = PUSH_INTERVAL
     while True:
         try:
             js = json.dumps(get_info()).encode("utf-8")
             req = urllib.request.Request(MANAGER_URL, data=js, headers={"Content-Type": "application/json"})
-            with urllib.request.urlopen(req, timeout=10, context=ssl_ctx) as r: pass
+            with urllib.request.urlopen(req, timeout=10, context=ssl_ctx) as r:
+                # 正常响应就是 "OK 1800" 这么短，读前 64 字节足够
+                interval = parse_interval(r.read(64).decode("utf-8", "ignore"), interval)
         except: pass
-        time.sleep(5)
+        time.sleep(interval)
 
 if __name__ == "__main__":
     push()

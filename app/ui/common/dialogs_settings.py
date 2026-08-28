@@ -34,10 +34,13 @@ def _settings_theme():
 
 from app.core.logging import logger
 from app.core.state import ADMIN_CONFIG, PROBE_DATA_CACHE, SERVERS_CACHE
-from app.services.cloudflare import CloudflareHandler
-from app.services.probe import install_probe_on_server
+from app.services.cloudflare import CloudflareHandler, invalidate_cf_cache
+from app.services.probe import (
+    PUSH_INTERVAL_DEFAULT, install_probe_on_server, probe_offline_after, probe_push_interval,
+)
 from app.storage.repositories import save_admin_config
 from app.ui.common.notifications import safe_notify
+from app.utils.formatters import format_push_age
 
 
 def _extract_server_ip(server_conf):
@@ -178,12 +181,16 @@ def open_batch_probe_dialog():
         def _build_plan():
             """把 SERVERS_CACHE 变成 [(server, 跳过原因 or None)]，顺序与侧边栏一致。"""
             plan = []
+            # 「已在线」用的就是面板别处判活的那把尺子，不能另写一个阈值：
+            # 这里原来硬编码 60 秒，而推送间隔一旦拉到半小时，健康机器的上次推送
+            # 平均也有十几分钟，60 秒等于谁都跳不过，这个勾选框就废了。
+            online_within = probe_offline_after()
             for s in SERVERS_CACHE:
                 reason = _probe_skip_reason(s)
                 if reason is None and skip_chk.value:
                     age = _probe_push_age(s)
-                    if age is not None and age < 60:
-                        reason = f'已在线（{int(age)} 秒前推送），跳过'
+                    if age is not None and age < online_within:
+                        reason = f'已在线（{format_push_age(age)}推送），跳过'
                 plan.append((s, reason))
             return plan
 
@@ -273,8 +280,12 @@ def open_batch_probe_dialog():
                     'warning', timeout=12000,
                 )
             else:
+                # 别写死秒数：间隔是可配置的，而新装的 agent 第一次推送是立刻发的，
+                # 之后才按间隔睡。所以「马上变绿」是对的，「10 秒内」不是。
+                interval = probe_push_interval()
+                gap = f'{interval // 60} 分钟' if interval >= 60 else f'{interval} 秒'
                 safe_notify(
-                    f'✅ {ok} 台探针已更新。agent 每 5 秒推一次，状态大约 10 秒内变绿。',
+                    f'✅ {ok} 台探针已更新，状态很快变绿。之后每 {gap} 推一次。',
                     'positive', timeout=8000,
                 )
 
@@ -330,7 +341,8 @@ def open_cloudflare_settings_dialog():
 
                 handler = CloudflareHandler()
                 handler.token = token_val
-                ok, result = await handler.list_zones()
+                # 手点「刷新域名」就是想拿最新的，绕过 10 分钟的 zone 缓存
+                ok, result = await handler.list_zones(use_cache=not show_notify)
                 if ok:
                     zones = [item.get('name', '') for item in (result or []) if item.get('name')]
                     cf_domain_root.options = zones
@@ -404,6 +416,8 @@ def open_cloudflare_settings_dialog():
             ADMIN_CONFIG['cf_api_token'] = cf_token.value.strip()
             ADMIN_CONFIG['cf_root_domain'] = str(cf_domain_root.value or '').strip()
             await save_admin_config()
+            # 换了 token 就是换了账号，能看到的 zone 完全不同，缓存必须作废
+            invalidate_cf_cache()
             safe_notify('✅ Cloudflare 配置已保存', 'positive')
             d.close()
 
@@ -436,10 +450,58 @@ def open_probe_settings_dialog():
                     url_input = ui.input(value=default_url, placeholder='http://1.2.3.4:8080').classes('w-full').props(theme['input_props'])
 
                 with ui.column().classes('w-full'):
+                    ui.label('⏱ 探针推送间隔').classes('text-sm font-black text-slate-200' if theme['is_dark'] else 'text-sm font-black text-slate-800')
+                    ui.label(
+                        'agent 每隔多久上报一次系统指标。间隔越长，面板 CPU 越低——软路由上'
+                        '尤其明显。**节点数据不受影响**：打开单机详情页时会当场 SSH 直拉最新的。'
+                        '代价是指标（CPU / 内存 / 网速）只有这个粒度，掉线告警也会相应变慢。'
+                    ).classes('text-xs text-slate-500 mb-2')
+
+                    interval_options = {
+                        60: '1 分钟',
+                        300: '5 分钟',
+                        900: '15 分钟',
+                        1800: '30 分钟（推荐）',
+                        3600: '1 小时',
+                        7200: '2 小时',
+                        21600: '6 小时（最省）',
+                    }
+                    current_interval = probe_push_interval()
+                    if current_interval not in interval_options:
+                        # 配置文件里手改过、或旧值落在预设之外：原样列出来，
+                        # 别打开个设置页就把用户的值静默改成最近的预设
+                        interval_options[current_interval] = f'{current_interval} 秒（当前值）'
+                        interval_options = dict(sorted(interval_options.items()))
+
+                    interval_select = ui.select(
+                        interval_options, value=current_interval, label='推送间隔',
+                    ).props(theme['input_props'] + ' options-dense').classes('w-full')
+                    interval_hint = ui.label('').classes('text-[11px] text-slate-500 mt-1')
+
+                    def describe_interval():
+                        """把间隔的两个下游后果算给用户看，别让他自己推。"""
+                        try:
+                            secs = int(interval_select.value or PUSH_INTERVAL_DEFAULT)
+                        except (TypeError, ValueError):
+                            secs = PUSH_INTERVAL_DEFAULT
+                        offline = secs * 2 + 60
+                        # 巡检 120 秒一轮 + 连续 3 轮失败才报警
+                        alert = offline + 3 * 120
+                        interval_hint.set_text(
+                            f'判定离线需 {offline // 60} 分钟无推送；'
+                            f'Telegram 掉线告警最慢约 {alert // 60} 分钟后发出。'
+                            '改完记得跑一次「一键安装 / 更新所有探针」，或等 agent 下次推送时自动生效。'
+                        )
+
+                    interval_select.on_value_change(lambda _: describe_interval())
+                    describe_interval()
+
+                with ui.column().classes('w-full'):
                     ui.label('🤖 Telegram 通知').classes('text-sm font-black text-slate-200' if theme['is_dark'] else 'text-sm font-black text-slate-800')
                     ui.label(
-                        '服务器掉线 / 恢复报警。巡检每 120 秒一轮，连续 3 轮失败才报警（约 6 分钟'
-                        '才发出，避免网络抖动误报）。只巡检已装探针的机器。'
+                        '服务器掉线 / 恢复报警。巡检每 120 秒一轮，连续 3 轮失败才报警，'
+                        '避免网络抖动误报。判活看的是探针推送时间，所以实际告警延迟取决于'
+                        '上面的推送间隔（见那行提示）。只巡检已装探针的机器。'
                     ).classes('text-xs text-slate-500 mb-2')
 
                     with ui.grid().classes('w-full grid-cols-1 sm:grid-cols-2 gap-3'):
@@ -480,6 +542,14 @@ def open_probe_settings_dialog():
 
             ADMIN_CONFIG['tg_bot_token'] = tg_token.value.strip()
             ADMIN_CONFIG['tg_chat_id'] = tg_id.value.strip()
+
+            # 存秒数。probe_push_interval() 会再钳一次范围，所以这里不用校验；
+            # 面板每次收到推送都会把这个值回给 agent，已装的探针下一轮就跟上，
+            # 不用为了改间隔重装。
+            try:
+                ADMIN_CONFIG['probe_push_interval'] = int(interval_select.value or PUSH_INTERVAL_DEFAULT)
+            except (TypeError, ValueError):
+                ADMIN_CONFIG['probe_push_interval'] = PUSH_INTERVAL_DEFAULT
 
             await save_admin_config()
             if not quiet:

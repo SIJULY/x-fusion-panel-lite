@@ -430,6 +430,9 @@ async def load_dashboard_stats():
         };
 
         window.dashInterval = setInterval(async () => {
+            // 数据源是探针缓存，而精简版的推送间隔是半小时级的：3 秒一轮只会
+            // 反复把同一份数据拉回来，每次还要在服务端跑一遍 calculate_dashboard_data
+            // 的全量遍历。15 秒足够让「刚改完节点」这类变化及时反映出来。
             // 仪表盘已被切走（content_container 被清空）时统计卡片的 DOM 就不在了，
             // 此时轮询拉回来的数据没有任何接收方，直接自行停掉，避免后台一直空转。
             if (!document.getElementById('stat-servers')) {
@@ -445,7 +448,7 @@ async def load_dashboard_stats():
             // 新建连接，所以第二次必然走在活的 socket 上。
             const ok = await window.dashFetchOnce();
             if (!ok) await window.dashFetchOnce();
-        }, 3000);
+        }, 15000);
 
         window.applyDashboardTheme = function() {
             const isDark = document.body.classList.contains('body--dark');

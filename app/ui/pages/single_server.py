@@ -8,6 +8,7 @@ from app.core import state
 from app.core.state import ADMIN_CONFIG, NODES_DATA, PROBE_DATA_CACHE, SERVERS_CACHE
 from app.services.cloudflare import CloudflareHandler
 from app.services.manager_factory import get_manager, has_ssh_target
+from app.services.probe import probe_offline_after
 from app.services.ssh import _ssh_exec_wrapper
 from app.services.traffic_guard import (
     ensure_traffic_limit_cycle,
@@ -24,7 +25,7 @@ from app.storage.repositories import save_nodes_cache, save_servers
 from app.ui.common.notifications import safe_copy_to_clipboard, safe_notify
 from app.ui.dialogs.inbound_dialog import delete_inbound_with_confirm, open_inbound_dialog
 from app.utils.encoding import generate_detail_config, generate_node_link
-from app.utils.formatters import format_bytes
+from app.utils.formatters import format_bytes, format_push_age
 from app.ui.dialogs import server_dialog as _server_dialog
 
 
@@ -320,7 +321,9 @@ PY'''
                             static = {}
 
                         now_ts = _time.time()
-                        is_stale = bool(probe_cache and (now_ts - to_float(probe_cache.get('last_updated', 0), 0) > 20))
+                        last_push_ts = to_float(probe_cache.get('last_updated', 0), 0)
+                        push_age = max(0.0, now_ts - last_push_ts) if last_push_ts else None
+                        is_stale = bool(probe_cache and push_age is not None and push_age > probe_offline_after())
 
                         mem_total = to_float(probe_cache.get('mem_total', 0.0))
                         mem_usage_pct = clamp_percent(probe_cache.get('mem_usage', 0.0))
@@ -382,6 +385,7 @@ PY'''
                             'disk_used_gb': disk_used,
                             'disk_usage_pct': disk_usage_pct,
                             'has_probe': bool(probe_cache),
+                            'data_age_text': format_push_age(push_age),
                             'traffic_limit_enabled': bool(traffic_limit_enabled),
                             'traffic_limit_bytes': max(0, int(traffic_limit_bytes)),
                             'traffic_limit_gb': max(0.0, to_float(traffic_limit_gb, 0.0)),
@@ -419,6 +423,7 @@ PY'''
                             'disk_used_gb': 0.0,
                             'disk_usage_pct': 0.0,
                             'has_probe': False,
+                            'data_age_text': '',
                             'traffic_limit_enabled': False,
                             'traffic_limit_bytes': 0,
                             'traffic_limit_gb': 0.0,
@@ -527,6 +532,24 @@ PY'''
                             render_cloudflare_dns_card.refresh()
                         except:
                             pass
+
+                async def sync_domain_then_load_records():
+                    """打开详情页时的域名同步入口。
+
+                    以前有个每小时全量跑的定时任务干这件事，现在改成只在这里、只这一台。
+                    先同步（可能把机器换过的新 IP 回写进 url / ssh_host），再查 CF 记录，
+                    这样卡片展示的是校正之后的结果。
+
+                    同步失败绝不能挡住 CF 记录卡片——那是这个页面的主要内容。
+                    """
+                    try:
+                        from app.services.domain_sync import sync_server_domain_ip
+
+                        if await sync_server_domain_ip(server_conf, cf=CloudflareHandler()):
+                            await save_servers()
+                    except Exception as e:
+                        logger.warning(f"⚠️ [域名同步] {server_conf.get('name', '--')} 跳过: {e}")
+                    await load_cloudflare_records()
 
                 async def open_cloudflare_record_dialog(record=None):
                     from nicegui import app
@@ -1413,7 +1436,7 @@ PY'''
                                     is_online = False
                                     now_ts = _time.time()
                                     probe_cache = PROBE_DATA_CACHE.get(server_conf['url'])
-                                    if probe_cache and (now_ts - probe_cache.get('last_updated', 0) < 20):
+                                    if probe_cache and (now_ts - probe_cache.get('last_updated', 0) < probe_offline_after()):
                                         is_online = True
                                     elif server_conf.get('_status') == 'online':
                                         is_online = True
@@ -1437,13 +1460,14 @@ PY'''
                                                 'color: var(--xf-text-muted);')
 
                                 live_status_badge()
-                                ui.timer(3.0, live_status_badge.refresh)
+                                # 数据源是半小时才更新一次的探针缓存，没必要 3 秒重建一次徽章
+                                ui.timer(10.0, live_status_badge.refresh)
                     @ui.refreshable
                     def render_top_actions():
                         with ui.row().classes('items-center justify-end gap-2 z-10 flex-wrap'):
                             import time as _time
                             probe_cache = PROBE_DATA_CACHE.get(server_conf['url'])
-                            is_probe_online = bool(probe_cache and (_time.time() - probe_cache.get('last_updated', 0)) <= 20)
+                            is_probe_online = bool(probe_cache and (_time.time() - probe_cache.get('last_updated', 0)) <= probe_offline_after())
                             with ui.row().classes('items-center gap-1.5 px-2 py-1 rounded-sm border').style(
                                     'background: var(--xf-soft-bg); border-color: var(--xf-card-border);'):
                                 ui.element('div').classes(
@@ -1530,6 +1554,13 @@ PY'''
                                         render_metric_row('在线运行时间', snap['uptime'], value_color='#10b981',
                                                           accent='#10b981')
 
+                                        # 精简版是半小时级推送，指标必然是「一段时间前的」。
+                                        # 标出年龄，别让用户把陈旧的 CPU 曲线当实时读。
+                                        age_text = snap.get('data_age_text') or ''
+                                        if age_text and snap.get('has_probe'):
+                                            ui.label(f'⏱ 探针数据采集于 {age_text}').classes(
+                                                'text-[10px] tracking-wide pt-1').style('color: var(--xf-text-muted);')
+
 
                                     render_sys_dyn()
 
@@ -1611,7 +1642,9 @@ PY'''
                         except Exception as e:
                             logger.exception(f'单服务器页自动刷新失败: {e}')
 
-                    ui.timer(2.0, safe_refresh)
+                    # 刷的全是 PROBE_DATA_CACHE 里半小时才变一次的数据，
+                    # 每 2 秒重建四组卡片纯属白做
+                    ui.timer(10.0, safe_refresh)
 
 
                 # --------------------- 3. Cloudflare 记录区 (动态伸缩：小屏压缩，大屏恢复原设定) ---------------------
@@ -1767,7 +1800,10 @@ PY'''
 
                     render_cloudflare_dns_card()
                     if ADMIN_CONFIG.get('cf_api_token', '').strip() and ADMIN_CONFIG.get('cf_root_domain', '').strip():
-                        ui.timer(0.2, load_cloudflare_records, once=True)
+                        # 打开详情页 = 域名同步的唯一触发点（原来是每小时全量的定时任务）。
+                        # 只有这个入口走 sync_domain_then_load_records；后面几处「改完记录再刷一下」
+                        # 仍然直接调 load_cloudflare_records，不必为了刷卡片再同步一遍。
+                        ui.timer(0.2, sync_domain_then_load_records, once=True)
 
 
                 # --------------------- 4. 节点列表区 (小屏可见保底 + 大屏恢复原布局比例) ---------------------
@@ -1850,7 +1886,11 @@ PY'''
                         with ui.element('div').classes('absolute inset-0 overflow-y-auto px-[16px] py-2 bg-[#030712]' if is_dark else 'absolute inset-0 overflow-y-auto px-[16px] py-2 bg-[#f8fbff]'):
                             await render_node_list()
 
-                if has_manager_access and not NODES_DATA.get(server_conf['url']):
+                # 打开详情页就当场 SSH 直拉一次节点表。
+                # 以前这里加了 `not NODES_DATA.get(url)` 的条件，因为探针每 5 秒推一次、
+                # 缓存本来就是新的。现在推送是半小时级的，缓存不再能代表现状，
+                # 而「主动点开详情页」正是该付这次 SSH 开销的时机。
+                if has_manager_access:
                     ui.timer(0.2, lambda: asyncio.create_task(reload_and_refresh_ui()), once=True)
 
                 # --------------------- 5. 底部空白垫高 (小屏压缩，大屏恢复原设定) ---------------------

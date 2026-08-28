@@ -1,5 +1,6 @@
 from app.core.logging import logger
 from app.core.state import NODES_DATA, PROBE_DATA_CACHE, SERVERS_CACHE, SUBS_CACHE
+from app.services.probe import probe_offline_after
 from app.utils.geo import detect_country_group
 
 
@@ -33,6 +34,7 @@ def calculate_dashboard_data():
 
         import time
         now_ts = time.time()
+        offline_after = probe_offline_after()
 
         for s in SERVERS_CACHE:
             res = NODES_DATA.get(s['url'], []) or []
@@ -69,7 +71,7 @@ def calculate_dashboard_data():
             is_online = False
 
             if s.get('probe_installed') and probe_data:
-                if now_ts - probe_data.get('last_updated', 0) < 60:
+                if now_ts - probe_data.get('last_updated', 0) < offline_after:
                     is_online = True
 
             if not is_online:

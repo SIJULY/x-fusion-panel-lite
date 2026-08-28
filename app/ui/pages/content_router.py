@@ -126,12 +126,19 @@ async def refresh_content(scope='ALL', data=None, force_refresh=False, sync_name
         async def _background_fetch(token_at_start):
             REFRESH_LOCKS.add(lock_key)
             try:
-                sync_targets = [s for s in current_page_servers if not s.get('probe_installed')]
+                # 自动路径（切分组、翻页）只同步没装探针的机器——探针机吃缓存。
+                # 但用户按下刷新按钮时 force_refresh=True，那就该真刷：推送间隔
+                # 已经是半小时级的，缓存不再代表现状，而「主动点刷新」正是该付
+                # SSH 开销的时机。这也是「显式动作才走 SSH」这条原则的另一半。
+                if force_refresh:
+                    sync_targets = list(current_page_servers)
+                else:
+                    sync_targets = [s for s in current_page_servers if not s.get('probe_installed')]
 
                 if sync_targets:
-                    logger.debug(f"[ContentRouter] auto background sync current page | scope={scope} data={scrub(data)} page_num={page_num} api_targets={len(sync_targets)}")
+                    logger.debug(f"[ContentRouter] auto background sync current page | scope={scope} data={scrub(data)} page_num={page_num} force={force_refresh} targets={len(sync_targets)}")
                     with client:
-                        safe_notify(f"🔄 后台同步当前页 {len(sync_targets)} 台 API 节点...", "ongoing", timeout=1200)
+                        safe_notify(f"🔄 后台同步当前页 {len(sync_targets)} 台节点...", "ongoing", timeout=1200)
 
                     tasks = [fetch_inbounds_safe(s, force_refresh=True, sync_name=sync_name_action) for s in sync_targets]
                     await asyncio.gather(*tasks, return_exceptions=True)

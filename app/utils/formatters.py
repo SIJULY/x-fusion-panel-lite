@@ -16,6 +16,22 @@ def format_bytes(size):
     return f"{size:.2f} {power_labels[n]}B"
 
 
+def format_push_age(seconds):
+    """把「距上次探针推送多少秒」说成人话。
+
+    精简版的推送间隔是半小时级的，指标必然是「一段时间前的」。与其让页面把
+    30 分钟前的 CPU 当实时展示，不如直接标出年龄——数字本身没问题，
+    误导人的是隐去了年龄。
+    """
+    if seconds is None:
+        return ''
+    if seconds < 90:
+        return f"{int(seconds)} 秒前"
+    if seconds < 5400:
+        return f"{int(seconds // 60)} 分钟前"
+    return f"{seconds / 3600:.1f} 小时前"
+
+
 def cn_to_arabic_str(match):
     s = match.group()
     if not s:
