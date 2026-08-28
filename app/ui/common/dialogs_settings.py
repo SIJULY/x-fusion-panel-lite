@@ -430,6 +430,103 @@ def open_cloudflare_settings_dialog():
     d.open()
 
 
+def open_batch_uninstall_probe_dialog():
+    """一键卸载所有探针"""
+    theme = _settings_theme()
+    is_dark = theme['is_dark']
+
+    with ui.dialog() as d, ui.card().classes(theme['wide_card']):
+        with ui.row().classes(theme['header_row']):
+            with ui.row().classes('items-center gap-3'):
+                with ui.element('div').classes(theme['icon_box'] + (' text-rose-400' if is_dark else ' text-rose-600')):
+                    ui.element('div').classes('absolute inset-0 bg-rose-400/10' if is_dark else 'absolute inset-0 bg-rose-400/10')
+                    ui.icon('delete').classes('text-[18px] drop-shadow-[0_0_5px_currentColor]')
+                ui.label('一键卸载所有探针').classes(theme['title'])
+            close_btn = ui.button(icon='close', on_click=d.close).props('flat round dense color=grey').classes(
+                'text-slate-400 hover:text-rose-300 hover:bg-rose-950/30' if is_dark else 'text-slate-500 hover:text-rose-700 hover:bg-rose-100')
+
+        with ui.column().classes(theme['body']):
+            ui.label('此操作将连接到已保存的所有服务器，并强制卸载上面的 x-fusion-agent 及 x-fusion-agent-lite 探针脚本，不影响节点代理。').classes(
+                'text-[11px] ' + ('text-slate-500' if is_dark else 'text-slate-500'))
+
+            count_lbl = ui.label('').classes(
+                'text-xs font-bold ' + ('text-rose-300' if is_dark else 'text-rose-700'))
+            progress_lbl = ui.label('').classes('text-xs ' + ('text-slate-400' if is_dark else 'text-slate-500'))
+            progress_box = ui.column().classes('w-full gap-0 max-h-[38vh] overflow-y-auto')
+
+        def _build_plan():
+            plan = []
+            for s in SERVERS_CACHE:
+                reason = _probe_skip_reason(s)
+                # 不论探针是否在线，都尝试去执行卸载命令
+                # 但需要服务器 SSH 信息完整
+                if reason == '暂不支持非 SSH 模式':
+                    plan.append((s, reason))
+                elif reason == '未保存 SSH 密码' or reason == '未保存 SSH 私钥':
+                    plan.append((s, reason))
+                else:
+                    plan.append((s, None))
+            return plan
+
+        async def run_uninstall():
+            btn_start.disable()
+            close_btn.disable()
+
+            from app.services.ssh import _ssh_exec_wrapper
+            plan = _build_plan()
+            total = len(plan)
+            need_run = [p for p in plan if p[1] is None]
+            count_lbl.set_text(f"待处理: {len(need_run)} / 总数: {total}")
+            progress_box.clear()
+
+            ok, fail, skip = 0, 0, 0
+            with progress_box:
+                for srv, reason in plan:
+                    if reason:
+                        skip += 1
+                        ui.label(f"⏭️ {srv.get('name', '未命名')} - 跳过: {reason}").classes('text-xs text-slate-500')
+                    else:
+                        progress_lbl.set_text(f"正在连接并卸载: {srv.get('name', '未命名')}")
+                        # 卸载所有类型探针脚本
+                        uninstall_cmd = (
+                            "systemctl stop x-fusion-agent && systemctl disable x-fusion-agent && rm -f /etc/systemd/system/x-fusion-agent.service && systemctl daemon-reload && rm -f /root/x_fusion_agent.py ; "
+                            "systemctl stop x-fusion-agent-lite && systemctl disable x-fusion-agent-lite && rm -f /etc/systemd/system/x-fusion-agent-lite.service && systemctl daemon-reload && rm -f /root/x_fusion_agent_lite.py ; "
+                            "echo '✅ 探针已卸载'"
+                        )
+                        success, output = await _ssh_exec_wrapper(srv, uninstall_cmd)
+                        if success:
+                            ok += 1
+                            ui.label(f"✅ {srv.get('name', '未命名')} - 卸载成功").classes('text-xs text-emerald-400')
+                            # 本地缓存一并清理
+                            u = srv.get('url')
+                            p_u = srv.get('ssh_host') or u
+                            for k in [u, p_u]:
+                                if k in PROBE_DATA_CACHE:
+                                    del PROBE_DATA_CACHE[k]
+                            srv['probe_installed'] = False
+                        else:
+                            fail += 1
+                            ui.label(f"❌ {srv.get('name', '未命名')} - 卸载失败: {output}").classes('text-xs text-rose-400')
+
+            from app.storage.repositories import save_servers
+            await save_servers()
+
+            progress_lbl.set_text('卸载任务结束')
+            ui.notification(f"批量卸载完成: 成功 {ok} / 失败 {fail} / 跳过 {skip}", type='info' if fail == 0 else 'warning')
+            close_btn.enable()
+            d.close()
+            # 刷新UI
+            from app.ui.components.dashboard import refresh_dashboard_ui
+            refresh_dashboard_ui()
+
+        with ui.row().classes(theme['footer_full']):
+            ui.button('取消', on_click=d.close).props('outline color=grey').classes(theme['outline_btn'])
+            btn_start = ui.button('开始卸载', on_click=run_uninstall, icon='delete').props('flat').classes(theme['save'])
+
+    d.open()
+
+
+
 def open_probe_settings_dialog():
     theme = _settings_theme()
     with ui.dialog() as d, ui.card().classes(theme['wide_card']):
@@ -529,6 +626,16 @@ def open_probe_settings_dialog():
                         f'当前共 {len(SERVERS_CACHE)} 台服务器。只覆盖本面板自己的 agent，'
                         '不影响完整版探针，也不影响 xray / x-ui 等代理服务。'
                     ).classes('text-[11px] text-slate-500 mt-1')
+                with ui.column().classes('w-full mt-4'):
+                    ui.label('🗑️ 批量卸载探针').classes('text-sm font-black text-rose-400' if theme['is_dark'] else 'text-sm font-black text-rose-600')
+                    ui.label(
+                        '一键强制卸载所有已连接服务器上的探针脚本（包含完整版及轻量版）。'
+                        '不会影响节点代理，仅清除探针服务。'
+                    ).classes('text-xs text-slate-500 mb-2')
+
+                    ui.button('一键卸载所有探针', icon='delete', on_click=open_batch_uninstall_probe_dialog).props(
+                        'flat').classes(theme['save'].replace('bg-cyan', 'bg-rose').replace('text-cyan', 'text-rose') + ' w-full')
+
 
         async def save_settings(*, close_dialog=True, quiet=False):
             # 两个参数都是 keyword-only：NiceGUI 的 handle_event 会检查处理函数
