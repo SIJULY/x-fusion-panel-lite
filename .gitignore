@@ -24,3 +24,5 @@ finish-step3.sh
 
 # Docker / compose local artifacts
 .caddy/
+# compose 读同目录的 .env，内网穿透的隧道 token 之类的机密放这里，绝不入库
+.env
