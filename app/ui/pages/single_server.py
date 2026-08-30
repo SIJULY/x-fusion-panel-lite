@@ -833,6 +833,14 @@ PY'''
                                     if not ok:
                                         safe_notify(f'解除断流失败：{unblock_msg}', 'negative')
                                         return
+                                elif not limit_enabled and old_enabled:
+                                    # 手动关闭流量限制（即从启用变关闭，并且不在 should_unblock 分支内时），
+                                    # 此时代表之前并没有标记为已触发封禁，但用户仍然点击了关闭，
+                                    # 那么我们强制去解封一次目前存在的所有业务端口以防万一。
+                                    ok, unblock_msg = await reset_traffic_limit_block_state(server_conf, force_all=True)
+                                    if not ok:
+                                        safe_notify(f'解除断流失败：{unblock_msg}', 'negative')
+                                        return
 
                                 server_conf['traffic_limit_enabled'] = limit_enabled
                                 server_conf['traffic_limit_gb'] = limit_gb

@@ -251,16 +251,27 @@ async def execute_traffic_unblock(server_conf: dict, ports: list[int]) -> tuple[
     return await _ssh_exec_wrapper(server_conf, command)
 
 
-async def reset_traffic_limit_block_state(server_conf: dict, unblock_ports: list[int] | None = None) -> tuple[bool, str]:
+async def reset_traffic_limit_block_state(server_conf: dict, unblock_ports: list[int] | None = None, force_all: bool = False) -> tuple[bool, str]:
     ports = list(unblock_ports or server_conf.get('traffic_limit_blocked_ports') or [])
     ok = True
     result_parts = []
+
+    if not ports and force_all:
+        from app.services.xui_fetch import fetch_inbounds_safe
+        # 如果缓存或远端拿不到任何入站节点端口，那就没什么能解封的
+        nodes = await fetch_inbounds_safe(server_conf)
+        if nodes:
+            ports = []
+            for node in nodes:
+                port = node.get('port')
+                if port and str(port).isdigit():
+                    ports.append(int(port))
 
     if ports:
         ok, output = await execute_traffic_unblock(server_conf, ports)
         result_parts.append((output or '').strip() or ('已解除业务端口封禁' if ok else '解除业务端口封禁失败'))
     else:
-        result_parts.append('未记录已封禁端口，跳过远程解封')
+        result_parts.append('未识别到需要解封的业务端口，跳过远程解封')
 
     server_conf['traffic_limit_triggered'] = False
     server_conf['traffic_limit_triggered_at'] = None
