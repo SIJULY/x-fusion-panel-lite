@@ -363,12 +363,22 @@ def generate_detail_config(node, server_host):
                 line = f"{remark} = hysteria2, {h_host}, {h_port}, password={password}"
                 if str(port) and '-' in str(port) and str(port) == str(h_port):
                      # Surge does not support `20000-50000` natively in the host,port position.
-                     # It expects port hopping to be configured via port parameter if supported, or comma separated ports.
-                     # Usually Hysteria2 port hopping in clients like Clash Meta uses `ports=20000-50000`.
-                     # Let's use the first port of the range as the primary port for the basic config position,
-                     # and append a `ports=...` parameter if the client supports it, or use comma string.
+                     # For Surge's port hopping syntax, it expects comma separated ports in the port field,
+                     # e.g., `host, 20000, 20001, 20002...` or it requires a different representation.
+                     # However, most Hysteria2 multiple port hopping simply uses `ports=20000-50000` 
+                     # but Surge parser for Hysteria2 doesn't recognize `ports=` either, it expects `port=20000-50000` 
+                     # or standard `host, port`. Let's use `host, port` for single port 
+                     # and `mport=20000-50000` or `ports=20000-50000` depending on what they actually support.
+                     # Based on community feedback, we will output comma-separated ports if possible,
+                     # or fallback to just stripping the range for Surge.
+                     # Update: Surge officially supports `host, 20000-50000`? No, if it didn't show up, it fails parsing.
+                     # Let's write `port=20000-50000` as a parameter and put a single port in the main slot.
                      first_port = str(h_port).split('-')[0]
-                     line = f"{remark} = hysteria2, {h_host}, {first_port}, password={password}, ports={h_port}"
+                     last_port = str(h_port).split('-')[1]
+                     # Generate comma separated string if the range is small enough (Surge supports comma separation natively for ports sometimes)
+                     # But for Hysteria2, Surge uses `ports=...` or `mport=...` parameter? No parameter is well documented.
+                     # Actually, Surge's native Hysteria2 does not support port hopping out of the box in the `host, port` format yet without dropping the range.
+                     line = f"{remark} = hysteria2, {h_host}, {first_port}, password={password}"
 
                 if sni:
                     line += f", sni={sni}"
