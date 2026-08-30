@@ -49,6 +49,29 @@ X-Fusion Panel Lite 是一个面向 **多服务器运维 / VPS 管理 / 节点�
 
 ## 更新记录
 
+### 2026-08-30（常用四种格式直出成图标按钮）
+
+上一条把链接条右侧的格式图标全撤了，理由是它们和「输出格式」菜单里的同名项重复。实际用起来发现撤过头了：Surge / Clash / V2Ray / Shadowsocks 这四种是天天要复制的，每次都得先展开一层菜单再找一行，比原来更慢。
+
+**病根找错了**。原先那排图标难用，不是因为「有图标」，而是因为**那四五个图标全是同一个灰色、又没有文字**，扫一眼分不出谁是谁——是区分度的问题，不是重复的问题。
+
+所以这版换成两层结构，两边**不重复**：
+
+| 位置 | 内容 |
+|---|---|
+| 链接条右侧图标 | Surge `bolt`（琥珀）· Clash `cloud_queue`（天蓝）· V2Ray/Shadowrocket `rocket_launch`（紫）· Shadowsocks `send`（绿）· 扫码 `qr_code_2`（青） |
+| 「输出格式」菜单 | sing-box · Quantumult X · Loon · ClashR · 原始链接（自适应） |
+
+每个图标给了**不同的图标形状 + 不同的语义色 + tooltip**，认不出形状时悬停就有全名。分界线是「点击频率」而不是「格式多少」。
+
+实现上加了模块级常量 `QUICK_FORMATS`（`(target, 图标, 色板名)` 三元组）和 `QUICK_KEYS`，菜单用 `rest = [t for t in ordered_targets() if t not in QUICK_KEYS]` 取补集——以后 `SUB_TARGETS` 里加新格式会自动落进菜单，不用改两处；`QUICK_FORMATS` 里写了个上游已删除的 target 也只是静默跳过，不会炸页面。「输出格式」按钮的 tooltip 现在也是从 `rest` 拼出来的，不会再和实际内容说岔。
+
+`sub_url_pairs()`（扫码弹窗里那份格式列表）仍然走完整的 `ordered_targets()`，**8 种格式一个都没少**。
+
+**验证**：渲染烟测四种场景全过，断言四个格式图标每张卡各一个（`bolt` 额外允许一个，独立节点区块标题在用）、每个都带 tooltip、菜单恰好剩 5 项、Surge/Clash/Shadowsocks/Shadowrocket 在菜单里**不再出现**、sing-box/Quantumult X/Loon/ClashR/原始链接都在。烟测里顺手修了个坑：NiceGUI 的 tooltip 也是子元素，文案会混进元素文本列表，所以断言改成按 tag 把 tooltip 和 menu_item 分开数，不然「菜单里不再重复 Surge」会被图标自己的 tooltip 顶成假失败。
+
+---
+
 ### 2026-08-30（订阅管理排版：节点池并入独立节点、链接条去掉重复图标）
 
 上一条「移除面板节点只读概览」留下了两处历史包袱，这版一并清掉。

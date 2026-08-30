@@ -9,6 +9,11 @@
 之后，节点池里除了独立节点就什么都没有了（面板节点的正主是服务器管理页），两级标题说
 的是同一件事，还各自挂了一个「批量导入」。现在塌成一层，计数挪到区块标题上。
 
+订阅链接右侧的格式入口分成两层：常用四种（QUICK_FORMATS）直出成彩色图标按钮，其余
+的收在「输出格式」菜单里，两边不重复。这里绕过一个弯——曾经把 Surge / Clash 图标全撤了，
+因为它们和菜单里的同名项并存；但真正难用的是那排图标既没文字又是同一个灰色，认不出谁
+是谁。所以现在保留图标、给每个不同的图标和语义色，改成让菜单不再重复它们。
+
 配色统一走 _TONES 一份色板 + var(--xf-*) 主题变量，不再一处一个三元表达式。切主题时
 main_page.toggle_theme 会整页重渲染这个视图（scope == 'SUBS'），所以这里按 is_dark
 直接算死值是安全的，不依赖那套 className 字符串替换。
@@ -34,6 +39,19 @@ from app.ui.common.notifications import safe_copy_to_clipboard, safe_notify, sho
 # 格式菜单的排列顺序。SUB_TARGETS 是 dict，直接遍历顺序不好控制，而这里的顺序
 # 决定用户第一眼看到哪几个，所以固定下来：常用的排前面。
 TARGET_ORDER = ['clash', 'singbox', 'surge', 'quanx', 'loon', 'v2ray', 'clashr', 'ss']
+
+# 直接摆在订阅链接右侧的常用格式：(target, 图标, 色板名)。
+# 这四个覆盖绝大多数客户端，天天要复制的东西不该每次先展开一层菜单。
+# 每个给了不同的图标 + 不同的语义色，是因为上一版那排图标全是同一个灰色、
+# 又没有文字，扫一眼分不出谁是谁——病根是「没有区分度」，不是「有图标」。
+QUICK_FORMATS = [
+    ('surge', 'bolt', 'warn'),
+    ('clash', 'cloud_queue', 'node'),
+    ('v2ray', 'rocket_launch', 'group'),
+    ('ss', 'send', 'ok'),
+]
+# 图标里已经有的，菜单里不再重复列一遍：同一条命令在相邻两处并存才是真的冗余。
+QUICK_KEYS = [k for k, _, _ in QUICK_FORMATS]
 
 # 语义色板：(前景, 底色, 描边)，深色一套 / 浅色一套。
 # 之前这些颜色散在十几个 `... if is_dark else ...` 里，同一个语义在不同卡片上深浅不一致；
@@ -641,28 +659,34 @@ async def load_subs_view():
                         icon_btn('delete', do_del, 'danger', is_dark, '删除这条订阅')
 
                 def format_buttons():
-                    # 原先这排是五个 xs 小圆点：content_copy(原始链接) / bolt(Surge) /
-                    # cloud_queue(Clash) / qr_code_2 / more_horiz。前三个是纯重复——这三种
-                    # 格式在「输出格式」菜单里本来就都有，原始链接更是整条链接条点一下就复制。
-                    # 现在只留「扫码」和「输出格式」两个真正独有的入口。
+                    # 四种常用格式（Surge / Clash / V2Ray / Shadowsocks）直接摆出来，
+                    # 其余的收在「输出格式」里。分界线是「点击频率」而不是「格式多少」。
+                    for t, ic, tn in QUICK_FORMATS:
+                        if t not in SUB_TARGETS:
+                            continue          # 上游哪天删了某个 target 就静默跳过，不炸页面
+                        url = f"{origin}/get/sub/{t}/{token}"
+                        icon_btn(ic, lambda u=url: safe_copy_to_clipboard(u), tn, is_dark,
+                                 f"复制 {SUB_TARGETS[t]} 链接")
+
                     icon_btn('qr_code_2',
                              lambda n=sub.get('name', '订阅'), p=sub_url_pairs(origin, token):
                                  open_qr_dialog(n, p),
-                             'node', is_dark, '扫码导入（可切换格式）', size='xs')
+                             'sub', is_dark, '扫码导入（可切换格式）')
 
-                    # 菜单入口从「⋯」换成带字的按钮：里面躺着 9 种格式，藏在一个省略号
-                    # 后面等于没有。样式跟 action_btn 保持一致，只是右侧挂个下拉箭头。
+                    # 菜单入口是带字带下拉箭头的按钮，不是一个省略号——藏在 ⋯ 后面等于没有。
+                    # 样式跟 action_btn 保持一致。
+                    rest = [t for t in ordered_targets() if t not in QUICK_KEYS]
                     tm = tone('muted', is_dark)
                     fmt_btn = ui.button('输出格式').props('flat dense size=sm icon-right=expand_more') \
                         .classes('rounded-sm font-black border px-2.5 whitespace-nowrap') \
                         .style(f"background: {tm['bg']}; border-color: {tm['border']}; color: {tm['fg']};")
-                    fmt_btn.tooltip('复制 Clash / sing-box / Surge 等各家格式的链接')
+                    fmt_btn.tooltip('其余格式：' + ' / '.join(SUB_TARGETS[t] for t in rest) + '，以及原始链接')
 
                     with fmt_btn:
                         # 底色 / 边框不用管：main_page 里有一条全局 .q-menu 规则拿
                         # !important 设了 --xf-popup-*，这里再写 inline 也是输
                         with ui.menu().props('auto-close').classes('rounded-sm'):
-                            for t in ordered_targets():
+                            for t in rest:
                                 url = f"{origin}/get/sub/{t}/{token}"
                                 ui.menu_item(f"复制 {SUB_TARGETS[t]} 链接",
                                              on_click=lambda u=url: safe_copy_to_clipboard(u)) \
