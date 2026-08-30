@@ -21,8 +21,9 @@ from app.services.traffic_guard import (
     reset_traffic_limit_block_state,
 )
 from app.services.xui_fetch import fetch_inbounds_safe
-from app.storage.repositories import save_nodes_cache, save_servers
+
 from app.ui.common.notifications import safe_copy_to_clipboard, safe_notify
+from app.storage.repositories import save_nodes_cache, save_single_server
 from app.ui.dialogs.inbound_dialog import delete_inbound_with_confirm, open_inbound_dialog
 from app.utils.encoding import generate_detail_config, generate_node_link
 from app.utils.formatters import format_bytes, format_push_age
@@ -304,7 +305,7 @@ PY'''
                             need_save = True
 
                         if need_save:
-                            asyncio.create_task(save_servers())
+                            asyncio.create_task(save_single_server(server_conf))
                             if has_manager_access:
                                 asyncio.create_task(reload_and_refresh_ui())
 
@@ -347,7 +348,7 @@ PY'''
 
                         cycle_changed = ensure_traffic_limit_cycle(server_conf, probe_cache if probe_cache else None)
                         if cycle_changed:
-                            asyncio.create_task(save_servers())
+                            asyncio.create_task(save_single_server(server_conf))
 
                         traffic_total_bytes = get_traffic_total_bytes(probe_cache)
                         traffic_cycle_used_bytes = get_traffic_cycle_used_bytes(server_conf, probe_cache) if probe_cache else 0
@@ -546,7 +547,7 @@ PY'''
                         from app.services.domain_sync import sync_server_domain_ip
 
                         if await sync_server_domain_ip(server_conf, cf=CloudflareHandler()):
-                            await save_servers()
+                            await save_single_server(server_conf)
                     except Exception as e:
                         logger.warning(f"⚠️ [域名同步] {server_conf.get('name', '--')} 跳过: {e}")
                     await load_cloudflare_records()
@@ -616,8 +617,8 @@ PY'''
                                     if full_domain.startswith('.'):
                                         full_domain = full_domain[1:]
                                     server_conf['cf_primary_domain'] = full_domain
-                                    from app.storage.repositories import save_servers
-                                    await save_servers()
+                                    
+                                    await save_single_server(server_conf)
                                     
                                 safe_notify('Cloudflare A 记录已保存', 'positive')
                                 d.close()
@@ -859,7 +860,7 @@ PY'''
                                 elif was_triggered and should_unblock:
                                     server_conf['traffic_limit_last_result'] = unblock_reason
 
-                                await save_servers()
+                                await save_single_server(server_conf)
                                 refresh_traffic_related_views()
                                 _mark_dialog_closed('save')
                                 d.close()
@@ -1043,7 +1044,7 @@ PY'''
                                 selected = option_key_map.get(proxy_select.value, '')
                                 should_save_servers = sync_underlying_proxy_to_cached_node(node_data, selected)
                                 if should_save_servers:
-                                    await save_servers()
+                                    await save_single_server(server_conf)
                                 else:
                                     await save_nodes_cache()
                                 safe_notify('前置代理设置已保存', 'positive')
@@ -1307,7 +1308,7 @@ PY'''
 
                         async def save():
                             node_data['remark'] = name_input.value.strip()
-                            await save_servers()
+                            await save_single_server(server_conf)
                             safe_notify('修改已保存', 'positive')
                             d.close()
                             render_node_list.refresh()
@@ -1395,7 +1396,7 @@ PY'''
 
                             if 'custom_nodes' in server_conf and node_data in server_conf['custom_nodes']:
                                 server_conf['custom_nodes'].remove(node_data)
-                                await save_servers()
+                                await save_single_server(server_conf)
                             await reload_and_refresh_ui()
                             await load_cloudflare_records()
 
@@ -1754,8 +1755,8 @@ PY'''
                                                             if not is_primary:
                                                                 async def set_primary(domain):
                                                                     server_conf['cf_primary_domain'] = domain
-                                                                    from app.storage.repositories import save_servers
-                                                                    await save_servers()
+                                                                    
+                                                                    await save_single_server(server_conf)
                                                                     from app.ui.common.notifications import safe_notify
                                                                     safe_notify(f"已设置 {domain} 为主域名", "positive")
                                                                     render_cloudflare_dns_card.refresh()
@@ -1769,8 +1770,8 @@ PY'''
                                                             else:
                                                                 async def unset_primary(domain):
                                                                     server_conf['cf_primary_domain'] = ""
-                                                                    from app.storage.repositories import save_servers
-                                                                    await save_servers()
+                                                                    
+                                                                    await save_single_server(server_conf)
                                                                     from app.ui.common.notifications import safe_notify
                                                                     safe_notify(f"已取消 {domain} 为主域名", "info")
                                                                     render_cloudflare_dns_card.refresh()
