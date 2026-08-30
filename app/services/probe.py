@@ -69,6 +69,49 @@ def probe_offline_after():
     return probe_push_interval() * 2 + 60
 
 
+def is_server_monitored(server_conf):
+    """这台机器在不在「有探针在报」的监控范围里。
+
+    两种都算：标记了 probe_installed 的，和虽然没标记但确实推过数据的
+    （自动注册进来的机器就是后者）。
+    """
+    if not isinstance(server_conf, dict):
+        return False
+    return bool(server_conf.get('probe_installed')) or server_conf.get('url') in PROBE_DATA_CACHE
+
+
+def is_server_offline(server_conf):
+    """监控范围内的机器当前是否离线。同步版。
+
+    判据和 get_server_status 完全一致（同一个 probe_offline_after 阈值），
+    只是不 async——它本来也没有 IO，纯读内存里的 PROBE_DATA_CACHE。侧边栏的
+    render_sidebar_content 是同步的 refreshable，没法 await，所以需要这个。
+
+    **不在监控范围里的机器一律返回 False**：从没装过探针、也从没上报过的机器
+    我们对它没有任何观测，把它算成「离线」是编的——而且那会让离线分组在刚导入
+    备份、还没装探针的面板上直接塞满所有机器，这个分组也就废了。
+    """
+    if not is_server_monitored(server_conf):
+        return False
+    cache = PROBE_DATA_CACHE.get(server_conf.get('url'))
+    if not cache:
+        # 标了 probe_installed 却一次都没推过：装完没跑起来，或者主控地址 VPS 侧不通
+        return True
+    return time.time() - cache.get('last_updated', 0) >= probe_offline_after()
+
+
+def list_offline_servers(servers=None):
+    """当前离线的机器，保持传入顺序（默认按 SERVERS_CACHE 的顺序）。"""
+    pool = SERVERS_CACHE if servers is None else servers
+    return [s for s in pool if isinstance(s, dict) and is_server_offline(s)]
+
+
+def count_unmonitored_servers(servers=None):
+    """既没装探针也从没上报过的机器台数——它们不参与离线判定，UI 上得说明白。"""
+    pool = SERVERS_CACHE if servers is None else servers
+    return sum(1 for s in pool if isinstance(s, dict) and not is_server_monitored(s))
+
+
 async def install_probe_on_server(server_conf):
     name = server_conf.get('name', 'Unknown')
     auth_type = server_conf.get('ssh_auth_type', '全局密钥')

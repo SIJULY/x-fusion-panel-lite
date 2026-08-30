@@ -14,6 +14,7 @@ from app.core.state import (
     SERVERS_CACHE,
     SIDEBAR_UI_REFS,
 )
+from app.services.probe import count_unmonitored_servers, list_offline_servers, probe_offline_after
 from app.storage.repositories import save_admin_config
 from app.ui.common.dialogs_data import open_data_mgmt_dialog, open_global_settings_dialog
 from app.ui.common.dialogs_settings import open_cloudflare_settings_dialog, open_probe_settings_dialog
@@ -27,6 +28,45 @@ from app.utils.formatters import smart_sort_key
 from app.utils.geo import detect_country_group
 
 batch_ssh_manager = BatchSSH()
+
+# ── 固定分组「离线服务器」 ──
+# 它不是用户建的分组：不能改名、不能删、不参与拖拽排序，也不写进 custom_groups。
+# EXPANDED_GROUPS / SIDEBAR_UI_REFS 都以分组名为键，所以这里用一个不可能和用户
+# 分组撞名的哨兵键——万一用户真建了个叫「离线服务器」的自定义分组，两边不会互相
+# 顶掉展开状态。
+OFFLINE_GROUP_KEY = '__xf_offline__'
+OFFLINE_GROUP_LABEL = '离线服务器'
+OFFLINE_ACCENT = '#f43f5e'  # rose-500，和单机详情页的 Offline 徽章同色
+
+# 上一次渲染时看到的离线 URL 集合。
+# 离线判定纯粹是「探针多久没推」，时间一到自己就变了，没有任何事件会通知面板，
+# 所以只能定时自查。这份快照在 render_sidebar_content 里更新，让定时器能判断
+# 「现在的离线集合和屏幕上画的是不是同一份」。
+_LAST_OFFLINE_SNAPSHOT = {'urls': None}
+
+
+def refresh_sidebar_if_offline_changed():
+    """定时自查：只有离线集合真的变了才重建侧边栏。
+
+    扫一遍内存缓存是微秒级的，而 render_sidebar_content.refresh() 会重建**所有**
+    已连接客户端的侧边栏。无条件每分钟来一次，在软路由上就是白烧 CPU。
+    """
+    try:
+        urls = frozenset(s.get('url') for s in list_offline_servers())
+    except Exception as e:
+        logger.warning(f'[Sidebar] 离线自查失败: {e}')
+        return
+
+    if _LAST_OFFLINE_SNAPSHOT['urls'] == urls:
+        return
+
+    was = _LAST_OFFLINE_SNAPSHOT['urls']
+    _LAST_OFFLINE_SNAPSHOT['urls'] = urls
+    logger.info(f"🔴 [离线分组] 离线机器有变动 ({len(was or ())} → {len(urls)} 台)，重建侧边栏")
+    try:
+        render_sidebar_content.refresh()
+    except Exception as e:
+        logger.warning(f'[Sidebar] 离线变动后 refresh 失败: {e}')
 
 
 async def _save_sidebar_group_order(kind: str, order: list[str]):
@@ -135,7 +175,15 @@ async def on_server_click_handler(server):
         f"[SidebarClick] on_server_click_handler done | server_url={server.get('url')} current_view_after={scrub(CURRENT_VIEW_STATE)}")
 
 
-def render_single_sidebar_row(s):
+def render_single_sidebar_row(s, register_ref=True):
+    """侧边栏里的一行服务器。
+
+    `register_ref=False` 给「离线服务器」那个固定分组用：同一台机器在侧边栏里会
+    出现两次（区域分组 + 离线分组），而 SIDEBAR_UI_REFS['rows'] 是按 url 做键的
+    单值——server_dialog 改完分组后拿它 row_el.move(target_col) 搬行。两份都登记
+    的话后写的赢，搬走的可能是离线分组里那一份，机器就从离线分组里凭空消失了。
+    所以只有归属分组里的那一行登记，副本不登记。
+    """
     theme = _sidebar_theme()
     btn_name_cls = f"{theme['btn_keycap_base']} flex-grow text-xs font-bold truncate px-3 py-2.5 {theme['btn_name_text']}"
     btn_settings_cls = f"{theme['btn_keycap_base']} w-10 py-2.5 px-0 flex items-center justify-center {theme['btn_settings_text']}"
@@ -171,7 +219,8 @@ def render_single_sidebar_row(s):
             'background: var(--xf-elevated-bg); border-color: var(--xf-card-border); color: var(--xf-text-muted);').tooltip(
             '配置 / 删除')
 
-    SIDEBAR_UI_REFS['rows'][s['url']] = row
+    if register_ref:
+        SIDEBAR_UI_REFS['rows'][s['url']] = row
     return row
 
 
@@ -211,6 +260,9 @@ def render_sidebar_content():
     async def open_country_group(group_name):
         await _refresh_scope('COUNTRY', group_name, client=ui.context.client)
 
+    async def open_offline_group(_=None):
+        await _refresh_scope('OFFLINE', client=ui.context.client)
+
     with ui.column().props('id=sidebar-scroll-box').classes(theme['scroll_wrap']).style(
             'background: var(--xf-bg-main);'):
         with ui.row().classes('w-full gap-2 px-1 mb-2'):
@@ -230,6 +282,71 @@ def render_sidebar_content():
                 ui.label('所有服务器').classes(theme['list_label']).style('color: var(--xf-text-main);')
             ui.badge(str(len(SERVERS_CACHE)), color='blue').props('rounded-sm outline').classes(
                 'text-[10px] font-black').style('color: var(--xf-accent); border-color: var(--xf-card-border);')
+
+        # ── 固定分组：离线服务器 ──
+        # 位置刻意放在「所有服务器」下面、自定义分组上面：机器掉线是最该被一眼
+        # 看到的事，往下滚才能看到就晚了。
+        # 这是个**筛选视图**而不是归属——机器同时还留在自己的区域 / 自定义分组里。
+        offline_servers = list_offline_servers()
+        try:
+            offline_servers.sort(key=smart_sort_key)
+        except Exception:
+            offline_servers.sort(key=lambda x: x.get('name', ''))
+
+        # 让定时自查以「屏幕上现在画的这一份」为基准，这样第一次 tick 不会无谓重建
+        _LAST_OFFLINE_SNAPSHOT['urls'] = frozenset(s.get('url') for s in offline_servers)
+
+        has_offline = bool(offline_servers)
+        unmonitored = count_unmonitored_servers()
+        offline_border = (f"color-mix(in srgb, {OFFLINE_ACCENT} 40%, var(--xf-card-border))"
+                          if has_offline else 'var(--xf-card-border)')
+
+        with ui.expansion('', icon=None, value=OFFLINE_GROUP_KEY in EXPANDED_GROUPS) \
+                .classes(theme['expansion_custom']).props(theme['expansion_header_props']).style(
+                f'background: color-mix(in srgb, var(--xf-elevated-bg) 94%, white 6%); '
+                f'border-color: {offline_border}; '
+                f'box-shadow: 0 10px 24px rgba(15,23,42,0.10), 0 1px 0 rgba(255,255,255,0.08) inset;') \
+                .on_value_change(lambda e: EXPANDED_GROUPS.add(OFFLINE_GROUP_KEY) if e.value
+                                 else EXPANDED_GROUPS.discard(OFFLINE_GROUP_KEY)) as off_exp:
+            with off_exp.add_slot('header'):
+                # 这里没有 drag_indicator：固定分组不参与排序，摆个抓手图标是骗人的。
+                # 同理 group_header_row 自带的 cursor-grab 要换成 cursor-pointer。
+                with ui.row().classes(f"{theme['group_header_row']} no-wrap") \
+                        .classes(remove='cursor-grab active:cursor-grabbing', add='cursor-pointer') \
+                        .style('color: var(--xf-text-main);') \
+                        .on('click', open_offline_group):
+                    with ui.row().classes('items-center gap-3 flex-grow overflow-hidden no-wrap'):
+                        with ui.column().classes(theme['list_icon_box']).style(
+                                f"border-color: {offline_border};"):
+                            ui.icon('cloud_off' if has_offline else 'cloud_done') \
+                                .classes(f"{theme['list_icon']} xf-sidebar-icon-glyph") \
+                                .style(f"color: {OFFLINE_ACCENT if has_offline else 'var(--xf-text-muted)'};")
+                        ui.label(OFFLINE_GROUP_LABEL).classes(theme['group_name']).style(
+                            f"color: {OFFLINE_ACCENT if has_offline else 'var(--xf-text-main)'};")
+
+                    with ui.row().classes('no-drag items-center gap-1 pr-2 flex-shrink-0').on(
+                            'mousedown.stop').on('click.stop'):
+                        ui.badge(str(len(offline_servers)), color='red' if has_offline else 'grey') \
+                            .props('rounded-sm outline').classes('text-[10px] font-black') \
+                            .style('border-color: var(--xf-card-border);') \
+                            .tooltip(f"探针超过 {probe_offline_after() // 60} 分钟没推送就算离线")
+
+            with ui.column().classes(theme['expansion_body']).style(
+                    'background: color-mix(in srgb, var(--xf-elevated-bg) 84%, var(--xf-bg-main)); '
+                    'border-color: color-mix(in srgb, var(--xf-accent) 8%, var(--xf-card-border));') as off_col:
+                SIDEBAR_UI_REFS['groups'][OFFLINE_GROUP_KEY] = off_col
+                if has_offline:
+                    for s in offline_servers:
+                        # register_ref=False：这是副本，别顶掉归属分组里那一行的引用
+                        render_single_sidebar_row(s, register_ref=False)
+                else:
+                    ui.label('受监控的服务器全部在线').classes('text-xs font-bold px-1 py-0.5') \
+                        .style('color: var(--xf-text-muted);')
+                if unmonitored:
+                    # 说清楚判定范围：没装探针的机器我们没有观测，不能算它离线
+                    ui.label(f'另有 {unmonitored} 台未装探针，不参与离线判定') \
+                        .classes('text-[11px] font-medium px-1') \
+                        .style('color: var(--xf-text-muted); opacity: 0.8;')
 
         final_tags = ADMIN_CONFIG.get('custom_groups', [])
 

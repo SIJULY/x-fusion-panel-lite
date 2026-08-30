@@ -8,6 +8,7 @@ from app.core.logging import logger, scrub
 from app.core.config import PAGE_SIZE
 from app.core.state import CURRENT_VIEW_STATE, LAST_SYNC_MAP, REFRESH_LOCKS, SERVERS_CACHE
 from app.services.xui_fetch import fetch_inbounds_safe
+from app.services.probe import list_offline_servers
 from app.ui.common.notifications import safe_notify
 from app.utils.formatters import smart_sort_key
 from app.utils.geo import detect_country_group
@@ -48,6 +49,10 @@ def get_targets_by_scope(scope, data):
     try:
         if scope == 'ALL':
             targets = list(SERVERS_CACHE)
+        elif scope == 'OFFLINE':
+            # 固定分组「离线服务器」。这是个筛选视图而不是归属，机器同时还在自己的
+            # 区域分组里；判据见 probe.is_server_offline（未装探针的不算离线）。
+            targets = list_offline_servers()
         elif scope == 'TAG':
             targets = [s for s in SERVERS_CACHE if data in s.get('tags', [])]
         elif scope == 'COUNTRY':
@@ -203,6 +208,8 @@ async def _render_ui_internal(scope, data, page_num, force_refresh, sync_name_ac
             hide_group_column = False
             if scope == 'ALL':
                 title = f"🌍 所有服务器 ({len(targets)})"
+            elif scope == 'OFFLINE':
+                title = f"🔴 离线服务器 ({len(targets)})"
             elif scope == 'TAG':
                 title = f"🏷️ 自定义分组: {data} ({len(targets)})"
                 is_group_view = True
@@ -243,8 +250,13 @@ async def _render_ui_internal(scope, data, page_num, force_refresh, sync_name_ac
                 if not filtered_targets:
                     logger.debug(f"[ContentRouter] _render_ui_internal empty list | scope={scope} data={scrub(data)} keyword={keyword}")
                     with ui.column().classes('w-full h-64 justify-center items-center text-gray-400'):
-                        ui.icon('inbox', size='4rem')
-                        ui.label('未找到匹配的服务器' if keyword else '列表为空')
+                        # 离线分组空着是好事，别用「列表为空」这种像出错的说法
+                        if scope == 'OFFLINE' and not keyword:
+                            ui.icon('check_circle', size='4rem').classes('text-emerald-400')
+                            ui.label('当前没有检测到离线服务器')
+                        else:
+                            ui.icon('inbox', size='4rem')
+                            ui.label('未找到匹配的服务器' if keyword else '列表为空')
                     return
 
                 try:

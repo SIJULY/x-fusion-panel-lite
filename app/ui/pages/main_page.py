@@ -11,7 +11,7 @@ from app.core.logging import logger, scrub
 from app.core.state import ADMIN_CONFIG, SERVERS_CACHE
 from app.storage.repositories import save_admin_config
 from app.ui.common.notifications import safe_copy_to_clipboard
-from app.ui.components.sidebar import render_sidebar_content
+from app.ui.components.sidebar import refresh_sidebar_if_offline_changed, render_sidebar_content
 from app.ui.pages.login_page import check_auth
 from app.utils.geo import fetch_geo_from_ip
 from app.utils.network import get_dynamic_origin
@@ -652,6 +652,12 @@ def main_page(request: Request):
 
     with ui.left_drawer(value=True, fixed=True).classes(current_theme['drawer_classes']).props('width=360 bordered id=xf-drawer') as drawer:
         render_sidebar_content()
+        # 「离线服务器」固定分组的数据源是「探针多久没推」，时间一到自己就变，没有
+        # 任何事件会通知面板，所以只能定时自查。定时器放在 refreshable 外面（和
+        # single_server 里那个 live_status_badge 一样）：放里面会被自己的 refresh
+        # 连带销毁。回调只在离线集合真的变了时才重建侧边栏，见 sidebar.py。
+        # 60 秒和后台报警任务（120 秒）同量级——探针推送间隔是半小时级的，再密没意义。
+        ui.timer(60.0, refresh_sidebar_if_offline_changed)
 
     with ui.header().classes(current_theme['header_classes']).props('id=xf-header'):
         with ui.row().classes('w-full items-center justify-between'):
