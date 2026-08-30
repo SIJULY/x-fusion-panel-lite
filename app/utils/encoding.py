@@ -378,7 +378,7 @@ def generate_detail_config(node, server_host):
                      # Generate comma separated string if the range is small enough (Surge supports comma separation natively for ports sometimes)
                      # But for Hysteria2, Surge uses `ports=...` or `mport=...` parameter? No parameter is well documented.
                      # Actually, Surge's native Hysteria2 does not support port hopping out of the box in the `host, port` format yet without dropping the range.
-                     line = f"{remark} = hysteria2, {h_host}, {first_port}, password={password}"
+                     line = f"{remark} = hysteria2, {h_host}, {first_port}, password={password}, port-hopping={h_port}"
 
                 if sni:
                     line += f", sni={sni}"
