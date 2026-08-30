@@ -837,13 +837,14 @@ PY'''
                                 server_conf['traffic_limit_gb'] = limit_gb
 
                                 if not limit_enabled:
-                                    if not should_unblock:
-                                        server_conf['traffic_limit_triggered'] = False
-                                        server_conf['traffic_limit_triggered_at'] = None
-                                        server_conf['traffic_limit_last_total_bytes'] = 0
-                                        server_conf['traffic_limit_blocked_ports'] = []
-                                        server_conf['traffic_limit_last_result'] = ''
-                                        server_conf['traffic_limit_notified'] = False
+                                    server_conf['traffic_limit_triggered'] = False
+                                    server_conf['traffic_limit_triggered_at'] = None
+                                    server_conf['traffic_limit_last_total_bytes'] = 0
+                                    server_conf['traffic_limit_blocked_ports'] = []
+                                    server_conf['traffic_limit_last_result'] = ''
+                                    server_conf['traffic_limit_notified'] = False
+                                    server_conf['traffic_limit_pending_unblock'] = False
+                                    server_conf['traffic_limit_pending_unblock_ports'] = []
                                 elif not old_enabled:
                                     if not str(server_conf.get('traffic_limit_cycle_month') or '').strip() or server_conf.get('traffic_limit_cycle_start_bytes') == 0:
                                         server_conf['traffic_limit_cycle_month'] = ''
@@ -853,6 +854,8 @@ PY'''
                                     server_conf['traffic_limit_blocked_ports'] = []
                                     server_conf['traffic_limit_last_result'] = ''
                                     server_conf['traffic_limit_notified'] = False
+                                    server_conf['traffic_limit_pending_unblock'] = False
+                                    server_conf['traffic_limit_pending_unblock_ports'] = []
                                 elif was_triggered and should_unblock:
                                     server_conf['traffic_limit_last_result'] = unblock_reason
 
