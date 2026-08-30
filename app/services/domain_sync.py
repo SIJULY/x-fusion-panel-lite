@@ -2,9 +2,9 @@
 
 原先这是 `app/jobs/domain_ip_sync.py` 里一个每小时全量跑一遍的定时任务：
 遍历 SERVERS_CACHE，为每台机器打 1-2 次 Cloudflare API。精简版实测下来这批请求
-是启动后那串刷屏 CF 日志的来源，而它真正能起作用的场合极少——两处更新守卫
-（`current_host != domain`）保证「url 里填的就是域名」的机器**永远不会被更新**，
-为它们跑的 CF 往返是纯白费。
+是启动后那串刷屏 CF 日志的来源，而它真正能起作用的场合极少——`url` 的更新守卫
+（`current_host != domain`）保证「url 里填的就是域名」的机器**url 永远不会被更新**，
+为它们跑的 CF 往返基本白费。
 
 所以改成按需：只在用户主动打开单机详情页时同步那一台。详情页本来就要查
 Cloudflare 记录（`load_cloudflare_records`），顺路做完回写，不增加网络往返。
@@ -16,9 +16,12 @@ from urllib.parse import urlparse, urlunparse
 
 from app.core.logging import logger
 from app.core.state import NODES_DATA, PROBE_DATA_CACHE
+from app.utils.network import is_ip_literal
 
 
 def _resolve_ip(domain):
+    """故意不走 `resolve_domain_ip` 的 DNS_CACHE：这里要的就是「域名现在指向哪」，
+    读缓存等于拿旧答案跟旧答案比，IP 变了也发现不了。"""
     try:
         return socket.gethostbyname(domain)
     except Exception:
@@ -57,7 +60,9 @@ async def sync_server_domain_ip(srv, cf=None):
         current_ip = srv.get('ssh_host')
 
     domain = srv.get('cf_primary_domain')
-    if not domain and current_ip:
+    # 反查只对 IP 有意义：current_ip 落成域名时（url 里填的就是域名）拿它去查
+    # list_a_records_by_ip 必然空手而归，白打一次 CF 往返
+    if not domain and current_ip and is_ip_literal(current_ip):
         try:
             ok, records = await cf.list_a_records_by_ip(current_ip)
             if ok and records and len(records) > 0:
@@ -119,7 +124,9 @@ async def sync_server_domain_ip(srv, cf=None):
             logger.warning(f"Failed to parse or update URL for {srv.get('name')}: {e}")
 
     ssh_host = srv.get('ssh_host')
-    if ssh_host and ssh_host != new_ip and ssh_host != domain:
+    # 这里不再拿 `ssh_host != domain` 当守卫：ssh_host 存的就是域名时才最该被换成 IP
+    # （SSH 要连的是机器本身，域名过了 CF 橙云会连到边缘节点上去）
+    if ssh_host and ssh_host != new_ip:
         logger.info(f"🔄 [域名IP同步] {srv.get('name', 'Unknown')} SSH Host 更新: {ssh_host} -> {new_ip}")
         srv['ssh_host'] = new_ip
         updated = True

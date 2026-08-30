@@ -14,13 +14,19 @@ from app.core.state import (
     SIDEBAR_UI_REFS,
 )
 from app.services.probe import install_probe_on_server
-from app.services.server_ops import fast_resolve_single_server, generate_smart_name
+from app.services.server_ops import (
+    fast_resolve_single_server,
+    generate_smart_name,
+    normalize_server_host_fields,
+    resolve_host_to_ip,
+)
 from app.services.ssh import _ssh_exec_wrapper
 from app.storage.repositories import save_servers, save_single_server
 from app.ui.common.notifications import safe_notify
 from app.ui.components.dashboard import refresh_dashboard_ui
 from app.ui.components.sidebar import render_sidebar_content, render_single_sidebar_row
 from app.utils.geo import detect_country_group
+from app.utils.network import extract_host
 
 
 SINGLE_ROW_COLS = 'grid-template-columns: minmax(0, 3fr) minmax(0, 1fr) minmax(0, 1.5fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) 140px; align-items: center;'
@@ -193,35 +199,25 @@ async def save_server_config(server_data, is_add=True, idx=None):
 async def open_server_dialog(idx=None):
     is_edit = idx is not None
     original_data = SERVERS_CACHE[idx] if is_edit else {}
+
+    # 打开编辑框前先把主机字段归位：`ssh_host` 只留 IP，域名落到 `cf_primary_domain`。
+    # 直接改 SERVERS_CACHE 里的原对象并落库，所以这轮修正是持久的，不是只糊弄一下 UI。
+    if is_edit:
+        try:
+            if await normalize_server_host_fields(original_data):
+                await save_single_server(original_data)
+        except Exception as e:
+            logger.warning(f"[ServerDialog] 主机字段归位失败: {e}")
+
     data = original_data.copy()
 
-    # Pre-process IP/Domain split to correct wrong assignment
-    import re
-    def is_ipv4_or_ipv6(address: str) -> bool:
-        if not address:
-            return False
-        if re.match(r'^(\d{1,3}\.){3}\d{1,3}$', address):
-            return True
-        if ':' in address and '.' not in address:
-            return True
-        return False
-
-    temp_host = data.get('ssh_host')
-    if not temp_host and is_edit:
-        if '://' in data.get('url', ''):
-            temp_host = data.get('url', '').split('://')[-1].split(':')[0]
-        else:
-            temp_host = data.get('url', '').split(':')[0]
-
-    if temp_host and not is_ipv4_or_ipv6(temp_host):
-        if not data.get('cf_primary_domain'):
-            data['cf_primary_domain'] = temp_host
-        try:
-            resolved_ip = socket.gethostbyname(temp_host)
-            data['ssh_host'] = resolved_ip
-        except Exception:
-            # If resolution fails, we still want it out of the IP field
-            data['ssh_host'] = ''
+    # `ssh_host` 为空时输入框会回退显示面板 URL 的主机，这里预解析成 IP，
+    # 免得又在「SSH 主机 IP」里显示出一个域名。
+    ssh_host_display_fallback = ''
+    if is_edit and not str(data.get('ssh_host') or '').strip():
+        fallback_host = extract_host(data.get('url'))
+        if fallback_host:
+            ssh_host_display_fallback = await resolve_host_to_ip(fallback_host) or fallback_host
 
     theme = _server_dialog_theme()
 
@@ -353,31 +349,9 @@ async def open_server_dialog(idx=None):
                 asyncio.create_task(_install_and_report(target_for_install))
 
         with ui.column().classes(theme['panel_bg'] + ' gap-3'):
-            init_host = data.get('ssh_host')
+            init_host = str(data.get('ssh_host') or '').strip()
             if not init_host and is_edit:
-                if '://' in data.get('url', ''):
-                    init_host = data.get('url', '').split('://')[-1].split(':')[0]
-                else:
-                    init_host = data.get('url', '').split(':')[0]
-
-            # If the user didn't explicitly set cf_primary_domain, but ssh_host/url contains a domain name
-            # instead of an IP address, we should separate them: IP goes to ssh_host, domain to cf_primary_domain.
-            # But the requirement says: if it's currently showing a domain in SSH Host IP, that's wrong.
-            # "This domain should be shown in the second input (Cloudflare main domain), here it should only show the IP".
-            # We can detect if init_host is a domain (not an IP).
-            
-            # Simple check if it's an IP: contains only numbers and dots
-            import re
-            is_ip = re.match(r'^[\d\.]+$', init_host or '')
-            
-            # Since the dialog is already rendering, changing the value here is good.
-            # Actually we can do it even earlier before creating the cf_primary_domain input?
-            # Or we can just dynamically sync them? No, we just fix the UI.
-            # Wait, `init_host` is calculated here at line 328.
-            # But wait, `cf_primary_domain_input` was already created at line 255.
-            # Oh, `cf_primary_domain_input.value` is already bound to `data.get('cf_primary_domain')`.
-            # If the initial data has `ssh_host` set to a domain, it will appear here.
-            # Let's fix this in the data parsing block or initialization block.
+                init_host = ssh_host_display_fallback
 
             inputs['ssh_host'] = ui.input(label='SSH 主机 IP', value=init_host).classes('w-full').props(theme['input'])
 
