@@ -393,19 +393,11 @@ async def load_subs_view():
     normal_subs = [(i, s) for i, s in enumerate(SUBS_CACHE) if s.get('type') != 'collection']
     collections = [(i, s) for i, s in enumerate(SUBS_CACHE) if s.get('type') == 'collection']
 
-    # 面板节点按服务器聚合。lookup 里 srv 为 None 的就是独立节点，单独一节展示。
-    panel_servers = {}
-    for _key, (node, host, srv) in lookup.items():
-        if not srv:
-            continue
-        row = panel_servers.setdefault(srv.get('url'), {
-            'name': srv.get('name') or '未命名服务器', 'host': host, 'total': 0, 'on': 0,
-        })
-        row['total'] += 1
-        if node.get('enable', True):
-            row['on'] += 1
-    panel_total = sum(v['total'] for v in panel_servers.values())
-    panel_on = sum(v['on'] for v in panel_servers.values())
+    # 面板节点只需要一个总数：订阅能引用多少条面板节点，用在页头统计和节点池副标题上。
+    # 原来这里按服务器聚合出 name / host / total / on，只为「面板节点」那块只读概览的
+    # chip 列表服务；概览已移除（节点的正主是服务器管理页），聚合也就没有存在意义了。
+    # lookup 里 srv 为 None 的是独立节点，单独一节展示，不计入这里。
+    panel_total = sum(1 for _node, _host, srv in lookup.values() if srv)
 
     def open_batch_import():
         from app.ui.dialogs.sub_dialogs import open_batch_import_dialog
@@ -445,27 +437,6 @@ async def load_subs_view():
                             is_dark, 'node'):
             action_btn('批量导入', 'playlist_add', open_batch_import, 'muted', is_dark, '一次粘贴多条分享链接')
             action_btn('添加独立节点', 'add', open_add_independent_node, 'node', is_dark, '手填一条分享链接')
-
-        # 面板节点：只读概览。真正的增删在「服务器管理」里，这里给的是「我手上有多少料」。
-        if panel_servers:
-            with ui.element('div').classes('w-full flex flex-col gap-2 p-3 mb-4 rounded-sm border') \
-                    .style('background: var(--xf-code-bg); border-color: var(--xf-card-border);'):
-                with ui.row().classes('w-full items-center justify-between gap-2 flex-wrap'):
-                    with ui.row().classes('items-center gap-2 flex-wrap'):
-                        ui.icon('dns').classes('text-[15px]').style('color: var(--xf-accent);')
-                        ui.label('面板节点').classes('text-xs font-black tracking-wide') \
-                            .style('color: var(--xf-text-strong);')
-                        chip(f'{len(panel_servers)} 台服务器', 'muted', is_dark)
-                        chip(f'启用 {panel_on} / 共 {panel_total}', 'ok' if panel_on else 'warn', is_dark,
-                             tip='x-ui 里被禁用的入站默认不下发')
-                    ui.label('由服务器管理同步，此处只读').classes('text-[10px] font-medium') \
-                        .style('color: var(--xf-text-subtle);')
-
-                with ui.row().classes('w-full gap-1.5 flex-wrap max-h-[116px] overflow-y-auto'):
-                    for url, info in panel_servers.items():
-                        chip(f"{info['name']} · {info['total']}", 'node' if info['on'] else 'muted', is_dark,
-                             icon='dns',
-                             tip=f"{url} · 出口 {info['host'] or '—'} · 启用 {info['on']} / 共 {info['total']}")
 
         # 独立节点
         group_label('bolt', '独立节点', len(INDEPENDENT_NODES_CACHE), 'node', is_dark,
