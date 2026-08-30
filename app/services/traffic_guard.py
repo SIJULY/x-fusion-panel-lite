@@ -241,14 +241,14 @@ async def execute_traffic_block(server_conf: dict, ports: list[int]) -> tuple[bo
     command = build_block_traffic_command(ports)
     if not command:
         return False, '未识别到可封禁的业务端口'
-    return await asyncio.to_thread(_ssh_exec_wrapper, server_conf, command)
+    return await _ssh_exec_wrapper(server_conf, command)
 
 
 async def execute_traffic_unblock(server_conf: dict, ports: list[int]) -> tuple[bool, str]:
     command = build_unblock_traffic_command(ports)
     if not command:
         return False, '未识别到可解封的业务端口'
-    return await asyncio.to_thread(_ssh_exec_wrapper, server_conf, command)
+    return await _ssh_exec_wrapper(server_conf, command)
 
 
 async def reset_traffic_limit_block_state(server_conf: dict, unblock_ports: list[int] | None = None) -> tuple[bool, str]:
