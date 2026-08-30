@@ -361,6 +361,15 @@ def generate_detail_config(node, server_host):
                 sni = params.get('sni', [''])[0] or params.get('peer', [''])[0]
 
                 line = f"{remark} = hysteria2, {h_host}, {h_port}, password={password}"
+                if str(port) and '-' in str(port) and str(port) == str(h_port):
+                     # Surge does not support `20000-50000` natively in the host,port position.
+                     # It expects port hopping to be configured via port parameter if supported, or comma separated ports.
+                     # Usually Hysteria2 port hopping in clients like Clash Meta uses `ports=20000-50000`.
+                     # Let's use the first port of the range as the primary port for the basic config position,
+                     # and append a `ports=...` parameter if the client supports it, or use comma string.
+                     first_port = str(h_port).split('-')[0]
+                     line = f"{remark} = hysteria2, {h_host}, {first_port}, password={password}, ports={h_port}"
+
                 if sni:
                     line += f", sni={sni}"
                 line += ", skip-cert-verify=true, download-bandwidth=1000, udp-relay=true"
