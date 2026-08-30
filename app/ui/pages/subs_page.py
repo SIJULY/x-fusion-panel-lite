@@ -1,10 +1,13 @@
 """订阅管理页。
 
-布局参考 sub-store：**上半部分是节点池**（面板同步来的节点 + 手动加的独立节点），
-**下半部分是订阅与组合**（把节点打包成链接下发给客户端）。顺序是刻意的——先有节点才
-有订阅，从上往下读就是用户的操作顺序。原来订阅在上、节点在下，新建一条订阅时得先往下
-滚去加节点、再滚回上面来建订阅；而且独立节点为空时那个 h-64 的大虚线框正好占满首屏，
-一进页面看到的是一片空白。
+两段式布局：**上半部分是独立节点**（手动粘贴的分享链接），**下半部分是订阅与组合**
+（把节点打包成链接下发给客户端）。顺序是刻意的——先有节点才有订阅，从上往下读就是
+用户的操作顺序；原来订阅在上、节点在下，新建一条订阅时得先往下滚去加节点、再滚回
+上面来建订阅。
+
+上半部分原先还在「独立节点」外面套了一层「节点池」区块。自从移除「面板节点」只读概览
+之后，节点池里除了独立节点就什么都没有了（面板节点的正主是服务器管理页），两级标题说
+的是同一件事，还各自挂了一个「批量导入」。现在塌成一层，计数挪到区块标题上。
 
 配色统一走 _TONES 一份色板 + var(--xf-*) 主题变量，不再一处一个三元表达式。切主题时
 main_page.toggle_theme 会整页重渲染这个视图（scope == 'SUBS'），所以这里按 is_dark
@@ -90,8 +93,13 @@ def stat_pill(icon, label, value, name, is_dark, tip=None):
     return row
 
 
-def section_header(icon, title, desc, is_dark, name='node'):
-    """区块标题栏。返回右侧操作区，调用方 `with ...:` 往里塞按钮。"""
+def section_header(icon, title, desc, is_dark, name='node', count=None):
+    """区块标题栏。返回右侧操作区，调用方 `with ...:` 往里塞按钮。
+
+    `count` 给了就在标题旁边挂一枚计数 chip。原先计数只出现在区块内部那层小标题
+    （group_label）上，于是「区块标题 + 小标题」两行说的是同一件事——计数上提之后，
+    只装一样东西的区块不必再套第二层标题。
+    """
     t = tone(name, is_dark)
     with ui.row().classes('w-full items-center justify-between gap-3 flex-wrap mb-3 pb-2.5 border-b') \
             .style('border-color: var(--xf-card-border);'):
@@ -100,8 +108,11 @@ def section_header(icon, title, desc, is_dark, name='node'):
                     .style(f"background: {t['bg']}; border-color: {t['border']}; color: {t['fg']};"):
                 ui.icon(icon).classes('text-[18px]')
             with ui.column().classes('gap-0 min-w-0'):
-                ui.label(title).classes('text-lg font-black tracking-wide leading-tight') \
-                    .style('color: var(--xf-text-strong);')
+                with ui.row().classes('items-center gap-2 min-w-0'):
+                    ui.label(title).classes('text-lg font-black tracking-wide leading-tight') \
+                        .style('color: var(--xf-text-strong);')
+                    if count is not None:
+                        chip(f'{count} 条' if count else '0', name if count else 'muted', is_dark)
                 if desc:
                     ui.label(desc).classes('text-[11px] font-medium leading-tight') \
                         .style('color: var(--xf-text-subtle);')
@@ -321,14 +332,15 @@ def link_bar(url, is_dark, buttons=None, tip='点击复制'):
             ui.icon('link').classes('text-[14px] shrink-0').style('color: var(--xf-accent);')
             ui.label(url).classes('text-[11px] font-mono font-bold truncate select-all') \
                 .style('color: var(--xf-text-strong);')
+            # 复制提示图标改成常驻（原先只在没有右侧按钮时才画）：整条本来就能点，
+            # 缺了这个暗示就只是看着像一段纯文本。放在可点区域内部，点它也等于点整条。
+            ui.icon('content_copy').classes('text-[13px] shrink-0 opacity-60') \
+                .style('color: var(--xf-text-muted);')
         clickable.tooltip(tip)
 
         if buttons:
-            with ui.row().classes('items-center gap-1 shrink-0'):
+            with ui.row().classes('items-center gap-1.5 shrink-0'):
                 buttons()
-        else:
-            # 没有格式按钮时也要有个「可以复制」的视觉暗示，否则整条只是看着像纯文本
-            ui.icon('content_copy').classes('text-[13px] shrink-0').style('color: var(--xf-text-muted);')
 
 
 async def load_subs_view():
@@ -393,9 +405,10 @@ async def load_subs_view():
     normal_subs = [(i, s) for i, s in enumerate(SUBS_CACHE) if s.get('type') != 'collection']
     collections = [(i, s) for i, s in enumerate(SUBS_CACHE) if s.get('type') == 'collection']
 
-    # 面板节点只需要一个总数：订阅能引用多少条面板节点，用在页头统计和节点池副标题上。
-    # 原来这里按服务器聚合出 name / host / total / on，只为「面板节点」那块只读概览的
-    # chip 列表服务；概览已移除（节点的正主是服务器管理页），聚合也就没有存在意义了。
+    # 面板节点只需要一个总数：订阅能引用多少条面板节点，用在页头统计和独立节点区块的
+    # 副标题上（「另有面板节点 N 条由服务器管理页同步」）。原来这里按服务器聚合出
+    # name / host / total / on，只为「面板节点」那块只读概览的 chip 列表服务；概览已移除
+    # （节点的正主是服务器管理页），聚合也就没有存在意义了。
     # lookup 里 srv 为 None 的是独立节点，单独一节展示，不计入这里。
     panel_total = sum(1 for _node, _host, srv in lookup.values() if srv)
 
@@ -421,31 +434,35 @@ async def load_subs_view():
                 with ui.column().classes('gap-0 min-w-0'):
                     ui.label('订阅管理').classes('text-2xl font-black tracking-wide leading-tight') \
                         .style('color: var(--xf-text-strong);')
-                    ui.label('上面维护节点池，下面把节点打包成订阅下发给客户端') \
+                    ui.label('上面维护独立节点，下面把节点打包成订阅下发给客户端') \
                         .classes('text-[11px] font-medium leading-tight').style('color: var(--xf-text-subtle);')
 
+            # 「独立节点」那枚药丸删了：它和下面独立节点区块标题上的计数是同一个数字，
+            # 而那个区块就贴在页头下面一行。面板 / 独立的拆分仍在「可用节点」的 tooltip 里。
             with ui.row().classes('items-center gap-2 flex-wrap'):
                 stat_pill('lan', '可用节点', len(all_active_keys), 'node', is_dark,
                           f'面板 {panel_total} + 独立 {len(INDEPENDENT_NODES_CACHE)}')
-                stat_pill('hub', '独立节点', len(INDEPENDENT_NODES_CACHE), 'node', is_dark, '手动粘贴的分享链接')
                 stat_pill('rss_feed', '订阅', len(normal_subs), 'sub', is_dark, '手动勾选节点的普通订阅')
                 stat_pill('layers', '组合', len(collections), 'group', is_dark, '合并多条订阅的组合订阅')
 
-        # ═════════════ ① 节点池 ═════════════
-        with section_header('hub', '节点池',
-                            f'订阅能引用的全部节点 · 面板 {panel_total} + 独立 {len(INDEPENDENT_NODES_CACHE)}',
-                            is_dark, 'node'):
+        # ═════════════ ① 独立节点 ═════════════
+        # 原先是「节点池」区块里面再套一层「独立节点」小标题。节点池自从移除「面板节点」
+        # 只读概览之后就只剩独立节点一样内容，两级标题说的是同一件事，而且两处各挂了一个
+        # 「批量导入」。现在合成一层，批量导入只留区块标题栏这一个。
+        with section_header('bolt', '独立节点',
+                            f'手动粘贴的分享链接，可被任意订阅引用 · '
+                            f'另有面板节点 {panel_total} 条由服务器管理页同步，不用在这里维护',
+                            is_dark, 'node', count=len(INDEPENDENT_NODES_CACHE)):
             action_btn('批量导入', 'playlist_add', open_batch_import, 'muted', is_dark, '一次粘贴多条分享链接')
             action_btn('添加独立节点', 'add', open_add_independent_node, 'node', is_dark, '手填一条分享链接')
 
-        # 独立节点
-        group_label('bolt', '独立节点', len(INDEPENDENT_NODES_CACHE), 'node', is_dark,
-                    '手动粘贴的分享链接，可被任意订阅引用')
-
         if not INDEPENDENT_NODES_CACHE:
+            # 空态不再重复挂「批量导入」：两个入口就在上面这行标题栏里，隔着 40px 再放一个
+            # 只是把空框撑得更高，而这个框已经占了首屏最大的一块
             empty_state('hub', '还没有独立节点',
-                        '把机场或自建的分享链接粘进来，就能和面板节点一起打包成订阅',
-                        is_dark, 'node', '批量导入', 'playlist_add', open_batch_import)
+                        '用上面的「批量导入 / 添加独立节点」把机场或自建的分享链接粘进来，'
+                        '就能和面板节点一起打包成订阅',
+                        is_dark, 'node')
         else:
             for idx, inode in enumerate(INDEPENDENT_NODES_CACHE):
                 link = inode.get('_raw_link', '') or ''
@@ -498,8 +515,8 @@ async def load_subs_view():
         # ═════════════ ② 订阅与组合 ═════════════
         ui.element('div').classes('w-full h-px my-6').style('background: var(--xf-card-border);')
 
-        with section_header('rss_feed', '订阅与组合', '给客户端用的链接，节点从上面的节点池里挑',
-                            is_dark, 'sub'):
+        with section_header('rss_feed', '订阅与组合', '给客户端用的链接，节点从上面挑',
+                            is_dark, 'sub', count=len(SUBS_CACHE)):
             action_btn('新建订阅', 'add', lambda: open_advanced_sub_editor(None), 'ok', is_dark,
                        '勾选节点建普通订阅，或建一条合并多条订阅的组合')
 
@@ -624,19 +641,24 @@ async def load_subs_view():
                         icon_btn('delete', do_del, 'danger', is_dark, '删除这条订阅')
 
                 def format_buttons():
-                    icon_btn('content_copy', lambda u=raw_url: safe_copy_to_clipboard(u), 'muted', is_dark,
-                             '复制原始链接（按客户端 UA 自动返回对应格式）', size='xs')
-                    icon_btn('bolt', lambda u=f"{origin}/get/sub/surge/{token}": safe_copy_to_clipboard(u),
-                             'warn', is_dark, '复制 Surge 订阅', size='xs')
-                    icon_btn('cloud_queue', lambda u=f"{origin}/get/sub/clash/{token}": safe_copy_to_clipboard(u),
-                             'ok', is_dark, '复制 Clash 订阅', size='xs')
+                    # 原先这排是五个 xs 小圆点：content_copy(原始链接) / bolt(Surge) /
+                    # cloud_queue(Clash) / qr_code_2 / more_horiz。前三个是纯重复——这三种
+                    # 格式在「输出格式」菜单里本来就都有，原始链接更是整条链接条点一下就复制。
+                    # 现在只留「扫码」和「输出格式」两个真正独有的入口。
                     icon_btn('qr_code_2',
                              lambda n=sub.get('name', '订阅'), p=sub_url_pairs(origin, token):
                                  open_qr_dialog(n, p),
                              'node', is_dark, '扫码导入（可切换格式）', size='xs')
 
-                    with ui.button(icon='more_horiz').props('flat dense round size=xs') \
-                            .style('color: var(--xf-text-muted);').tooltip('全部输出格式'):
+                    # 菜单入口从「⋯」换成带字的按钮：里面躺着 9 种格式，藏在一个省略号
+                    # 后面等于没有。样式跟 action_btn 保持一致，只是右侧挂个下拉箭头。
+                    tm = tone('muted', is_dark)
+                    fmt_btn = ui.button('输出格式').props('flat dense size=sm icon-right=expand_more') \
+                        .classes('rounded-sm font-black border px-2.5 whitespace-nowrap') \
+                        .style(f"background: {tm['bg']}; border-color: {tm['border']}; color: {tm['fg']};")
+                    fmt_btn.tooltip('复制 Clash / sing-box / Surge 等各家格式的链接')
+
+                    with fmt_btn:
                         # 底色 / 边框不用管：main_page 里有一条全局 .q-menu 规则拿
                         # !important 设了 --xf-popup-*，这里再写 inline 也是输
                         with ui.menu().props('auto-close').classes('rounded-sm'):
@@ -654,7 +676,7 @@ async def load_subs_view():
 
         if not SUBS_CACHE:
             empty_state('rss_feed', '还没有订阅',
-                        '从上面的节点池里勾几个节点建一条订阅，客户端填上链接就能用',
+                        '点「新建订阅」勾几个节点，客户端填上生成的链接就能用',
                         is_dark, 'ok', '新建订阅', 'add', lambda: open_advanced_sub_editor(None))
         else:
             group_label('rss_feed', '普通订阅', len(normal_subs), 'sub', is_dark, '手动勾选节点')
