@@ -613,8 +613,8 @@ async def load_subs_view():
                                             if srv.get('url') == url:
                                                 name = srv.get('name') or url
                                                 return f"「{name}」的节点 {nid}"
-                                        return f"已删服务器的节点 {nid}"
-                                    return k
+                                        return nid
+                                return k
                                 dead_info = "、".join([_dead_info_fmt(k) for k in dead_keys])
                                 c = chip(f'失效 {len(dead_keys)}', 'danger', is_dark, icon='link_off')
                                 c.tooltip(dead_info)
@@ -665,7 +665,7 @@ async def load_subs_view():
                                         if srv.get('url') == url:
                                             name = srv.get('name') or url
                                             return f"「{name}」的节点 {nid}"
-                                    return f"已删服务器的节点 {nid}"
+                                    return nid
                                 return k
                             dead_info = "、".join([_dead_info_fmt_clean(k) for k in dead_keys])
                             btn = action_btn(f'清理失效 {len(dead_keys)}', 'cleaning_services', do_clean,
