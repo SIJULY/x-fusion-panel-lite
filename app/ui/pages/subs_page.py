@@ -614,7 +614,7 @@ async def load_subs_view():
                                                 name = srv.get('name') or url
                                                 return f"「{name}」的节点 {nid}"
                                         return nid
-                                return k
+                                    return k
                                 dead_info = "、".join([_dead_info_fmt(k) for k in dead_keys])
                                 c = chip(f'失效 {len(dead_keys)}', 'danger', is_dark, icon='link_off')
                                 c.tooltip(dead_info)
