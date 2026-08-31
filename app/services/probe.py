@@ -106,10 +106,15 @@ def list_offline_servers(servers=None):
     return [s for s in pool if isinstance(s, dict) and is_server_offline(s)]
 
 
-def count_unmonitored_servers(servers=None):
-    """既没装探针也从没上报过的机器台数——它们不参与离线判定，UI 上得说明白。"""
+def get_unmonitored_servers(servers=None):
+    """既没装探针也从没上报过的机器列表——它们不参与离线判定，UI 上得说明白。"""
     pool = SERVERS_CACHE if servers is None else servers
-    return sum(1 for s in pool if isinstance(s, dict) and not is_server_monitored(s))
+    return [s for s in pool if isinstance(s, dict) and not is_server_monitored(s)]
+
+
+def count_unmonitored_servers(servers=None):
+    """既没装探针也从没上报过的机器台数"""
+    return len(get_unmonitored_servers(servers))
 
 
 async def install_probe_on_server(server_conf):

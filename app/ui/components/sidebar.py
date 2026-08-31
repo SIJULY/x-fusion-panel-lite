@@ -14,7 +14,7 @@ from app.core.state import (
     SERVERS_CACHE,
     SIDEBAR_UI_REFS,
 )
-from app.services.probe import count_unmonitored_servers, list_offline_servers, probe_offline_after
+from app.services.probe import count_unmonitored_servers, get_unmonitored_servers, list_offline_servers, probe_offline_after
 from app.storage.repositories import save_admin_config
 from app.ui.common.dialogs_data import open_data_mgmt_dialog, open_global_settings_dialog
 from app.ui.common.dialogs_settings import open_cloudflare_settings_dialog, open_probe_settings_dialog
@@ -297,7 +297,8 @@ def render_sidebar_content():
         _LAST_OFFLINE_SNAPSHOT['urls'] = frozenset(s.get('url') for s in offline_servers)
 
         has_offline = bool(offline_servers)
-        unmonitored = count_unmonitored_servers()
+        unmonitored_servers_list = get_unmonitored_servers()
+        unmonitored = len(unmonitored_servers_list)
         offline_border = (f"color-mix(in srgb, {OFFLINE_ACCENT} 40%, var(--xf-card-border))"
                           if has_offline else 'var(--xf-card-border)')
 
@@ -344,9 +345,11 @@ def render_sidebar_content():
                         .style('color: var(--xf-text-muted);')
                 if unmonitored:
                     # 说清楚判定范围：没装探针的机器我们没有观测，不能算它离线
+                    unmonitored_names = '、'.join([s.get('name', '未命名') for s in unmonitored_servers_list])
                     ui.label(f'另有 {unmonitored} 台未装探针，不参与离线判定') \
-                        .classes('text-[11px] font-medium px-1') \
-                        .style('color: var(--xf-text-muted); opacity: 0.8;')
+                        .classes('text-[11px] font-medium px-1 cursor-help') \
+                        .style('color: var(--xf-text-muted); opacity: 0.8;') \
+                        .tooltip(f'未装探针机器：{unmonitored_names}')
 
         final_tags = ADMIN_CONFIG.get('custom_groups', [])
 

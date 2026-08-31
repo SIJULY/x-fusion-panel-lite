@@ -598,8 +598,9 @@ async def load_subs_view():
                                          + ('（筛选规则刷掉了一部分）' if mismatch else ''))
 
                             if dead_keys:
+                                dead_info = "、".join([k.split("|")[1] if "|" in k else k for k in dead_keys])
                                 chip(f'失效 {len(dead_keys)}', 'danger', is_dark, icon='link_off',
-                                     tip='节点所在服务器已被删除，或 x-ui 里的 ID 变了')
+                                     tip=f'节点所在服务器已被删除，或 x-ui 里的 ID 变了: {dead_info}')
                             if broken_members:
                                 chip(f'成员失效 {broken_members}', 'danger', is_dark, icon='warning',
                                      tip='引用的成员订阅已被删除')
@@ -632,8 +633,12 @@ async def load_subs_view():
                                      '清理只剔除死引用，其余节点的顺序保持不变。'],
                                     '确认清理', apply, is_dark, 'warn', 'cleaning_services')
 
-                            action_btn(f'清理失效 {len(dead_keys)}', 'cleaning_services', do_clean,
-                                       'warn', is_dark, '剔除指向已删服务器 / 已变 ID 的节点')
+                            dead_info = "、".join([k.split("|")[1] if "|" in k else k for k in dead_keys])
+                            tip_text = f'剔除指向已删服务器 / 已变 ID 的节点: {dead_info}' if len(dead_info) < 50 else '剔除指向已删服务器 / 已变 ID 的节点 (悬浮查看失效 ID)'
+                            btn = action_btn(f'清理失效 {len(dead_keys)}', 'cleaning_services', do_clean,
+                                       'warn', is_dark, tip_text)
+                            if len(dead_info) >= 50:
+                                btn.tooltip(f'失效节点 ID: {dead_info}')
 
                         action_btn('管理', 'tune', lambda s=sub: open_advanced_sub_editor(s), 'muted', is_dark,
                                    '选节点 / 筛地区 / 重命名 / 预览')
