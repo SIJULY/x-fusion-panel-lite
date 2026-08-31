@@ -84,6 +84,31 @@ def tone(name, is_dark):
     return {'fg': fg, 'bg': bg, 'border': border}
 
 
+def format_dead_node_key(key, lookup=None):
+    """把订阅里的失效节点 key 格式化成可读的名称。
+
+    失效 key 通常只包含 ``服务器 URL|节点 ID``，老数据没有单独保存节点备注。
+    节点被删除时仍可根据 URL 找到所属服务器，所以普通节点直接显示服务器名称；
+    独立节点没有所属服务器，则显示独立节点标识。
+    """
+    raw_key = str(key or '')
+    if '|' not in raw_key:
+        return raw_key or '未知节点'
+
+    server_url, node_id = raw_key.split('|', 1)
+
+    if server_url == 'independent':
+        return f'独立节点（ID {node_id}）'
+
+    from app.core.state import ADMIN_CONFIG, SERVERS_CACHE
+    for server in list(SERVERS_CACHE) + list(ADMIN_CONFIG.get('unmonitored_servers', []) or []):
+        configured_url = str(server.get('url') or '').strip().rstrip('/')
+        if configured_url == server_url.strip().rstrip('/'):
+            return str(server.get('name') or server_url).strip()
+
+    return f'已删除服务器（{server_url}）'
+
+
 def chip(text, name='muted', is_dark=True, icon=None, tip=None):
     """一枚小标签。卡片上的元信息全部走它，粗细 / 间距 / 圆角只有这一处定义。"""
     t = tone(name, is_dark)
@@ -598,24 +623,8 @@ async def load_subs_view():
                                          + ('（筛选规则刷掉了一部分）' if mismatch else ''))
 
                             if dead_keys:
-                                def _dead_info_fmt(k):
-                                    if "|" in k:
-                                        url, nid = k.split("|", 1)
-                                        if url == "independent":
-                                            return f"独立节点 {nid[:6]}"
-                                        from app.core.state import SERVERS_CACHE, ADMIN_CONFIG
-                                        for srv in SERVERS_CACHE:
-                                            if srv.get('url') == url:
-                                                name = srv.get('name') or url
-                                                return f"「{name}」的节点 {nid}"
-                                        unmonitored = ADMIN_CONFIG.get('unmonitored_servers', [])
-                                        for srv in unmonitored:
-                                            if srv.get('url') == url:
-                                                name = srv.get('name') or url
-                                                return f"「{name}」的节点 {nid}"
-                                        return nid
-                                    return k
-                                dead_info = "、".join([_dead_info_fmt(k) for k in dead_keys])
+                                dead_info = "、".join(
+                                    format_dead_node_key(k, lookup) for k in dead_keys)
                                 c = chip(f'失效 {len(dead_keys)}', 'danger', is_dark, icon='link_off')
                                 c.tooltip(dead_info)
                             if broken_members:
@@ -650,24 +659,8 @@ async def load_subs_view():
                                      '清理只剔除死引用，其余节点的顺序保持不变。'],
                                     '确认清理', apply, is_dark, 'warn', 'cleaning_services')
 
-                            def _dead_info_fmt_clean(k):
-                                if "|" in k:
-                                    url, nid = k.split("|", 1)
-                                    if url == "independent":
-                                        return f"独立节点 {nid[:6]}"
-                                    from app.core.state import SERVERS_CACHE, ADMIN_CONFIG
-                                    for srv in SERVERS_CACHE:
-                                        if srv.get('url') == url:
-                                            name = srv.get('name') or url
-                                            return f"「{name}」的节点 {nid}"
-                                    unmonitored = ADMIN_CONFIG.get('unmonitored_servers', [])
-                                    for srv in unmonitored:
-                                        if srv.get('url') == url:
-                                            name = srv.get('name') or url
-                                            return f"「{name}」的节点 {nid}"
-                                    return nid
-                                return k
-                            dead_info = "、".join([_dead_info_fmt_clean(k) for k in dead_keys])
+                            dead_info = "、".join(
+                                format_dead_node_key(k, lookup) for k in dead_keys)
                             btn = action_btn(f'清理失效 {len(dead_keys)}', 'cleaning_services', do_clean,
                                        'warn', is_dark)
                             btn.tooltip(dead_info)
