@@ -65,8 +65,8 @@ async def fetch_inbounds_safe(server_conf, force_refresh=False, sync_name=False)
     url = server_conf['url']
 
     # 探针机器处理：除非强制刷新，否则直接信任推送的缓存
-    if server_conf.get('probe_installed', False) and not force_refresh:
-        return NODES_DATA.get(url, [])
+    # if server_conf.get('probe_installed', False) and not force_refresh:
+    #     return NODES_DATA.get(url, [])
 
     # 如果不是强制刷新且已有数据，直接返回
     if not force_refresh and url in NODES_DATA and NODES_DATA[url]:
