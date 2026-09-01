@@ -117,6 +117,9 @@ async def sync_server_domain_ip(srv, cf=None):
                     PROBE_DATA_CACHE[new_url] = PROBE_DATA_CACHE.pop(url_str)
                 if url_str in NODES_DATA:
                     NODES_DATA[new_url] = NODES_DATA.pop(url_str)
+                # 同步迁移所有订阅中引用的节点 key，否则旧 key 会被判定为"失效"
+                from app.services.sub_pipeline import migrate_sub_node_keys
+                migrate_sub_node_keys(url_str, new_url)
 
                 srv['url'] = new_url
                 updated = True

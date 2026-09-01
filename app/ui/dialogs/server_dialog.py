@@ -118,6 +118,12 @@ async def save_server_config(server_data, is_add=True, idx=None):
                     NODES_DATA[new_url] = NODES_DATA.pop(old_url)
                 if old_url in PROBE_DATA_CACHE:
                     PROBE_DATA_CACHE[new_url] = PROBE_DATA_CACHE.pop(old_url)
+                # 同步迁移所有订阅中引用的节点 key，否则旧 key 会被判定为"失效"
+                from app.services.sub_pipeline import migrate_sub_node_keys
+                migrate_sub_node_keys(old_url, new_url)
+                # 订阅 key 已在内存中迁移，需要持久化
+                from app.storage.repositories import save_subs
+                await save_subs()
 
         else:
             safe_notify("目标不存在", "negative")
@@ -348,6 +354,9 @@ async def open_server_dialog(idx=None):
                         NODES_DATA[new_url] = NODES_DATA.pop(old_url_key)
                     if old_url_key in PROBE_DATA_CACHE:
                         PROBE_DATA_CACHE[new_url] = PROBE_DATA_CACHE.pop(old_url_key)
+                    # 同步迁移所有订阅中引用的节点 key，否则旧 key 会被判定为"失效"
+                    from app.services.sub_pipeline import migrate_sub_node_keys
+                    migrate_sub_node_keys(old_url_key, new_url)
                     logger.info(f"🔄 [SSH保存] url 已同步更新: {old_url_host} -> {s_host}")
 
             if not final_name:

@@ -548,6 +548,9 @@ PY'''
 
                         if await sync_server_domain_ip(server_conf, cf=CloudflareHandler()):
                             await save_single_server(server_conf)
+                            # 域名同步可能更新了 url，订阅中的节点 key 已在内存中迁移，需要持久化
+                            from app.storage.repositories import save_subs
+                            await save_subs()
                     except Exception as e:
                         logger.warning(f"⚠️ [域名同步] {server_conf.get('name', '--')} 跳过: {e}")
                     await load_cloudflare_records()

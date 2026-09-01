@@ -78,6 +78,42 @@ def node_key(server_url, node):
     return f"{server_url}|{node.get('id')}"
 
 
+def migrate_sub_node_keys(old_url, new_url):
+    """服务器 url 变更时，同步迁移所有订阅中引用的节点 key。
+
+    订阅的 ``nodes`` 列表存的是 ``{server_url}|{node_id}`` 格式的 key，
+    服务器 url 变了之后旧 key 在 ``build_node_lookup()`` 中匹配不到，
+    会被判定为「已删除服务器」的失效节点。这个函数把所有订阅中以
+    ``old_url|`` 开头的 key 替换为 ``new_url|``，确保节点引用不会因
+    URL 变更而断裂。
+
+    **不做落盘**——调用方通常会在后续自行 ``save_subs()`` 或
+    ``save_servers()``；在 ``save_server_config`` 的流程中，
+    ``save_single_server`` 已经会触发持久化。
+    """
+    if not old_url or not new_url or old_url == new_url:
+        return
+
+    prefix = f"{old_url}|"
+    new_prefix = f"{new_url}|"
+    migrated_count = 0
+
+    for sub in SUBS_CACHE:
+        nodes = sub.get('nodes')
+        if not isinstance(nodes, list):
+            continue
+        updated = False
+        for i, key in enumerate(nodes):
+            if isinstance(key, str) and key.startswith(prefix):
+                nodes[i] = new_prefix + key[len(prefix):]
+                updated = True
+        if updated:
+            migrated_count += 1
+
+    if migrated_count:
+        logger.info(f"🔄 [订阅Key迁移] {migrated_count} 条订阅的节点引用已从 {old_url} 迁移到 {new_url}")
+
+
 def build_node_lookup():
     """{key: (node, host, server_conf)}，覆盖面板节点、自定义节点、独立节点。"""
     lookup = {}
