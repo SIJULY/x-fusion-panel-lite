@@ -330,6 +330,26 @@ async def open_server_dialog(idx=None):
             if not new_server_data.get('url'):
                 new_server_data['url'] = f"http://{s_host}:{s_port}"
 
+            # --- 关键修复：SSH 主机 IP 变更时，同步更新 url 中的 IP ---
+            # 当用户更改了 ssh_host（即服务器的实际 IP），url 中的旧 IP 也应同步更新，
+            # 否则订阅链接输出的节点 IP 仍是旧的。
+            from app.utils.network import extract_host, is_ip_literal
+            old_url = new_server_data.get('url', '')
+            old_url_host = extract_host(old_url)
+            if old_url_host and is_ip_literal(s_host) and old_url_host != s_host:
+                # url 中的 host 与新 ssh_host 不一致，需要替换
+                if is_ip_literal(old_url_host):
+                    # 旧 url host 也是 IP，直接替换
+                    new_url = old_url.replace(old_url_host, s_host, 1)
+                    old_url_key = new_server_data['url']
+                    new_server_data['url'] = new_url
+                    # 同步迁移 NODES_DATA 和 PROBE_DATA_CACHE 中的旧 key
+                    if old_url_key in NODES_DATA:
+                        NODES_DATA[new_url] = NODES_DATA.pop(old_url_key)
+                    if old_url_key in PROBE_DATA_CACHE:
+                        PROBE_DATA_CACHE[new_url] = PROBE_DATA_CACHE.pop(old_url_key)
+                    logger.info(f"🔄 [SSH保存] url 已同步更新: {old_url_host} -> {s_host}")
+
             if not final_name:
                 safe_notify("正在生成名称...", "ongoing")
                 final_name = await generate_smart_name(new_server_data)

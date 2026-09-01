@@ -1118,7 +1118,16 @@ PY'''
                                         'gap-1 justify-center w-full no-wrap min-w-0 opacity-40 group-hover:opacity-100 transition-opacity duration-300 relative z-10'):
                                     btn_props = 'flat dense size=sm round'
                                     cf_domain = server_conf.get('cf_primary_domain')
-                                    node_host = cf_domain.strip() if cf_domain else server_conf['url'].split('://')[-1].split(':')[0]
+                                    if cf_domain and cf_domain.strip():
+                                        node_host = cf_domain.strip()
+                                    else:
+                                        # 优先使用 ssh_host（纯 IP 时），它代表最新的服务器地址
+                                        from app.utils.network import is_ip_literal
+                                        _ssh_host = str(server_conf.get('ssh_host') or '').strip()
+                                        if _ssh_host and is_ip_literal(_ssh_host):
+                                            node_host = _ssh_host
+                                        else:
+                                            node_host = server_conf['url'].split('://')[-1].split(':')[0]
                                     raw_link = n.get('_raw_link', '') or generate_node_link(n, node_host)
                                     if raw_link:
                                         raw_btn = ui.button(icon='link',
@@ -1129,9 +1138,17 @@ PY'''
 
                                     async def copy_detail_action(node_item=n):
                                         cf_domain = server_conf.get('cf_primary_domain')
-                                        host = cf_domain.strip() if cf_domain else \
-                                            server_conf.get('url', '').replace('http://', '').replace('https://', '').split(
-                                                ':')[0]
+                                        if cf_domain and cf_domain.strip():
+                                            host = cf_domain.strip()
+                                        else:
+                                            # 优先使用 ssh_host（纯 IP 时），它代表最新的服务器地址
+                                            from app.utils.network import is_ip_literal
+                                            _ssh_host = str(server_conf.get('ssh_host') or '').strip()
+                                            if _ssh_host and is_ip_literal(_ssh_host):
+                                                host = _ssh_host
+                                            else:
+                                                host = server_conf.get('url', '').replace('http://', '').replace('https://', '').split(
+                                                    ':')[0]
                                         text = generate_detail_config(node_for_detail(node_item), host)
                                         if text and not str(text).startswith('//'):
                                             await safe_copy_to_clipboard(text)

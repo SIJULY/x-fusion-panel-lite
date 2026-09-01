@@ -51,13 +51,25 @@ def _clean_host_from_url(raw_url):
 
 
 def _server_host(srv):
-    """节点对外地址：优先 Cloudflare 主域名，否则用服务器 url 的主机名。
+    """节点对外地址：优先 Cloudflare 主域名，其次 ssh_host（纯 IP 时），最后用服务器 url 的主机名。
 
     这段逻辑原先在 api/subscriptions.py 里重复了 4 次，现在只有这一处。
+
+    关键修复：当 ssh_host 是纯 IP 且 url 里的 host 也是 IP 时，优先使用 ssh_host。
+    因为用户在编辑服务器时修改的是 ssh_host，它代表了服务器的最新 IP，
+    而 url 可能还保留着旧 IP（如果 save_server_config 之前的某个流程没有同步更新 url）。
     """
     cf_domain = srv.get('cf_primary_domain')
     if cf_domain and str(cf_domain).strip():
         return str(cf_domain).strip()
+
+    # 优先使用 ssh_host（如果是纯 IP），因为它是用户最后编辑的实际服务器地址
+    ssh_host = str(srv.get('ssh_host') or '').strip()
+    if ssh_host:
+        from app.utils.network import is_ip_literal
+        if is_ip_literal(ssh_host):
+            return ssh_host
+
     return _clean_host_from_url(srv.get('url'))
 
 

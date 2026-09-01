@@ -132,7 +132,16 @@ def draw_row(srv, node, css_style, compact_mode, is_first=True):
                 link = n.get('_raw_link') or n.get('link')
                 if not link:
                     cf_domain = s.get('cf_primary_domain')
-                    host = cf_domain.strip() if cf_domain else s['url'].split('://')[-1].split(':')[0]
+                    if cf_domain and cf_domain.strip():
+                        host = cf_domain.strip()
+                    else:
+                        # 优先使用 ssh_host（纯 IP 时），它代表最新的服务器地址
+                        from app.utils.network import is_ip_literal
+                        ssh_host = str(s.get('ssh_host') or '').strip()
+                        if ssh_host and is_ip_literal(ssh_host):
+                            host = ssh_host
+                        else:
+                            host = s['url'].split('://')[-1].split(':')[0]
                     link = generate_node_link(n, host)
                 await safe_copy_to_clipboard(link)
 
@@ -141,7 +150,16 @@ def draw_row(srv, node, css_style, compact_mode, is_first=True):
 
             async def copy_detail():
                 cf_domain = srv.get('cf_primary_domain')
-                host = cf_domain.strip() if cf_domain else srv['url'].split('://')[-1].split(':')[0]
+                if cf_domain and cf_domain.strip():
+                    host = cf_domain.strip()
+                else:
+                    # 优先使用 ssh_host（纯 IP 时），它代表最新的服务器地址
+                    from app.utils.network import is_ip_literal
+                    ssh_host = str(srv.get('ssh_host') or '').strip()
+                    if ssh_host and is_ip_literal(ssh_host):
+                        host = ssh_host
+                    else:
+                        host = srv['url'].split('://')[-1].split(':')[0]
                 text = generate_detail_config(node, host)
                 if text:
                     await safe_copy_to_clipboard(text)
