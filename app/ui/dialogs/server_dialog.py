@@ -108,8 +108,17 @@ async def save_server_config(server_data, is_add=True, idx=None):
         safe_notify(f"已添加: {server_data['name']}", "positive")
     else:
         if idx is not None and 0 <= idx < len(SERVERS_CACHE):
+            old_url = SERVERS_CACHE[idx].get('url')
+
             SERVERS_CACHE[idx].update(server_data)
             safe_notify(f"已更新: {server_data['name']}", "positive")
+            new_url = server_data.get('url')
+            if old_url != new_url:
+                if old_url in NODES_DATA:
+                    NODES_DATA[new_url] = NODES_DATA.pop(old_url)
+                if old_url in PROBE_DATA_CACHE:
+                    PROBE_DATA_CACHE[new_url] = PROBE_DATA_CACHE.pop(old_url)
+
         else:
             safe_notify("目标不存在", "negative")
             return False

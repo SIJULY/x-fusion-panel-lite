@@ -133,6 +133,22 @@ async def sub_handler(token: str, request: Request = None):
     if not sub:
         return Response("Invalid Token", 404)
 
+    # Force fetch node info to get latest IP
+    from app.services.xui_fetch import fetch_inbounds_safe
+    from app.core.state import SERVERS_CACHE
+    import asyncio
+    
+    async def _refresh_all_nodes():
+        tasks = []
+        for srv in SERVERS_CACHE:
+            if srv.get('probe_installed', False):
+                continue
+            tasks.append(fetch_inbounds_safe(srv, force_refresh=True))
+        if tasks:
+            await asyncio.gather(*tasks)
+    
+    await _refresh_all_nodes()
+
     record_access(token, request)
 
     resolved = resolve_sub_nodes(sub)
@@ -176,8 +192,38 @@ async def sub_handler(token: str, request: Request = None):
 async def group_sub_handler(group_b64: str):
     """分组订阅（原始链接）。行为与改造前一致：只过滤 enable。"""
     group_name = decode_base64_safe(group_b64)
+    from app.services.xui_fetch import fetch_inbounds_safe
+    from app.core.state import SERVERS_CACHE
+    import asyncio
+    
+    async def _refresh_all_nodes():
+        tasks = []
+        for srv in SERVERS_CACHE:
+            if srv.get('probe_installed', False):
+                continue
+            tasks.append(fetch_inbounds_safe(srv, force_refresh=True))
+        if tasks:
+            await asyncio.gather(*tasks)
+    
+    await _refresh_all_nodes()
+
     if not group_name:
         return Response("Invalid Group Name", 400)
+
+        from app.services.xui_fetch import fetch_inbounds_safe
+        from app.core.state import SERVERS_CACHE
+        import asyncio
+        
+        async def _refresh_all_nodes():
+            tasks = []
+            for srv in SERVERS_CACHE:
+                if srv.get('probe_installed', False):
+                    continue
+                tasks.append(fetch_inbounds_safe(srv, force_refresh=True))
+            if tasks:
+                await asyncio.gather(*tasks)
+        
+        await _refresh_all_nodes()
 
     resolved = resolve_group_nodes(group_name)
     logger.info(f"正在生成分组订阅: [{group_name}]，匹配到 {len(resolved)} 个节点")
@@ -219,6 +265,21 @@ async def short_group_handler(target: str, group_b64: str, request: Request):
 
 
 async def short_sub_handler(target: str, token: str, request: Request):
+        from app.services.xui_fetch import fetch_inbounds_safe
+        from app.core.state import SERVERS_CACHE
+        import asyncio
+        
+        async def _refresh_all_nodes():
+            tasks = []
+            for srv in SERVERS_CACHE:
+                if srv.get('probe_installed', False):
+                    continue
+                tasks.append(fetch_inbounds_safe(srv, force_refresh=True))
+            if tasks:
+                await asyncio.gather(*tasks)
+        
+        await _refresh_all_nodes()
+
     try:
         sub_obj = next((s for s in SUBS_CACHE if s.get('token') == token), None)
         if not sub_obj:
