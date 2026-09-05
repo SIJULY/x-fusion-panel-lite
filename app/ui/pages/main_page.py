@@ -633,6 +633,9 @@ def main_page(request: Request):
         elif current_scope == 'SUBS':
             from app.ui.pages.subs_page import load_subs_view
             await load_subs_view()
+        elif current_scope == 'PROBE':
+            from app.ui.pages.probe_page import load_probe_page
+            await load_probe_page()
 
     async def run_security_check():
         if last_ip and last_ip != current_ip:
@@ -731,17 +734,17 @@ def main_page(request: Request):
         last_scope = app.storage.user.get('last_view_scope', 'DASHBOARD')
         last_data_id = app.storage.user.get('last_view_data', None)
         last_page = app.storage.user.get('last_view_page', 1)
-        if last_scope == 'PROBE':
-            last_scope = 'DASHBOARD'
-            app.storage.user['last_view_scope'] = 'DASHBOARD'
-            app.storage.user['last_view_data'] = None
         target_data = last_data_id
         if last_scope in ['SINGLE', 'SSH_SINGLE'] and last_data_id:
             target_data = next((s for s in SERVERS_CACHE if s['url'] == last_data_id), None)
             if not target_data:
                 last_scope = 'DASHBOARD'
 
-        if last_scope == 'DASHBOARD':
+        if last_scope == 'PROBE':
+            logger.debug("[MainPage] restore_last_view branch=PROBE")
+            from app.ui.pages.probe_page import load_probe_page
+            await load_probe_page()
+        elif last_scope == 'DASHBOARD':
             logger.debug("[MainPage] restore_last_view branch=DASHBOARD")
             await load_dashboard_stats()
         elif last_scope == 'SUBS':

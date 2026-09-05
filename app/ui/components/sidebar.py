@@ -244,6 +244,9 @@ def render_sidebar_content():
             ui.button('仪表盘', icon='dashboard', on_click=lambda: asyncio.create_task(_load_dashboard())).props(
                 'flat align=left').classes(theme['top_btn']).style(
                 'background: var(--xf-elevated-bg); border-color: var(--xf-card-border); color: var(--xf-text-strong);')
+            ui.button('探针监控', icon='monitor_heart', on_click=lambda: asyncio.create_task(_load_probe())).props(
+                'flat align=left').classes(theme['top_btn']).style(
+                'background: var(--xf-elevated-bg); border-color: var(--xf-card-border); color: var(--xf-text-strong);')
             ui.button('订阅管理', icon='rss_feed', on_click=lambda: asyncio.create_task(_load_subs())).props(
                 'flat align=left').classes(theme['top_btn']).style(
                 'background: var(--xf-elevated-bg); border-color: var(--xf-card-border); color: var(--xf-text-strong);')
@@ -652,6 +655,12 @@ async def _load_subs():
     from app.ui.pages.subs_page import load_subs_view
 
     await load_subs_view()
+
+
+async def _load_probe():
+    from app.ui.pages.probe_page import load_probe_page
+
+    await load_probe_page()
 
 
 async def _refresh_scope(scope, data=None, client=None):
