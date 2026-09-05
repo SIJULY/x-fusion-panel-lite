@@ -18,6 +18,7 @@ applyXFusionDomTheme），Python 端不会重新渲染，写死的颜色切主�
 """
 
 import time
+from functools import partial
 
 from nicegui import app, ui
 
@@ -33,6 +34,7 @@ from app.services.probe import (
     probe_offline_after,
     probe_push_interval,
 )
+from app.ui.common.notifications import safe_notify
 from app.utils.formatters import format_bytes, format_push_age
 
 STATUS_ONLINE = '#22c55e'
@@ -497,6 +499,25 @@ def _render_server_card(snap: dict):
         _render_card_footer(snap, border_accent)
 
 
+async def _open_single_server(server_url: str):
+    """点服务器名 → 进单机详情页。
+
+    按 url 去 SERVERS_CACHE 里捞当前那个 dict，而不是用快照：快照是扁平副本，
+    而 content_router 的 SINGLE 视图要的是缓存里的原对象（它按身份比较来判断
+    「是不是同一台机器」，见 server_dialog 里那几处 current_data == ...）。
+    """
+    from app.ui.pages.content_router import refresh_content
+
+    target = next((s for s in SERVERS_CACHE
+                   if isinstance(s, dict) and s.get('url') == server_url), None)
+    if not target:
+        # 卡片渲染之后机器被删了
+        safe_notify('服务器不存在，可能已被删除', 'warning')
+        return
+
+    await refresh_content('SINGLE', target)
+
+
 def _render_card_header(snap, status_color, status_text,
                         status_icon, border_accent):
     with ui.row().classes(
@@ -505,9 +526,14 @@ def _render_card_header(snap, status_color, status_text,
         with ui.row().classes('items-center gap-2 overflow-hidden'):
             ui.icon('dns').classes('text-base flex-shrink-0').style(
                 'color: var(--xf-accent);')
-            ui.label(snap['name']).classes(
-                'text-sm font-black truncate').style(
-                'color: var(--xf-text-strong);')
+            # 悬停变色只用 CSS：挂 mouseenter/mouseleave 回调的话每次划过鼠标
+            # 都要走一趟服务端，代价和收益完全不成比例
+            name_label = ui.label(snap['name']).classes(
+                'text-sm font-black truncate cursor-pointer hover:underline'
+            ).style('color: var(--xf-text-strong);')
+            # url 在这里就绑定好，否则闭包会共享循环变量，所有卡片都指向最后一台
+            name_label.on('click', partial(_open_single_server, snap['url']))
+            name_label.tooltip('点击查看单机详情')
         with ui.row().classes('items-center gap-1.5 flex-shrink-0'):
             ui.icon(status_icon).classes('text-[8px]').style(
                 f'color: {status_color};')
