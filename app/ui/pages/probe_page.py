@@ -7,8 +7,8 @@
 探针推送间隔（半分钟 ~ 半小时级），前端每 30 秒重绘一次。
 
 布局：
-  顶部 — 统计概览（总服务器 / 在线 / 离线 / 未监控）
-  中部 — 每台服务器一张卡片，按在线→离线排序，展示关键指标
+  顶部 — 搜索框 + 分组筛选，然后是统计概览（总服务器 / 在线 / 离线 / 未监控）
+  中部 — 每台服务器一张卡片，按离线→在线→未监控排序，展示关键指标
 """
 
 import time
@@ -50,6 +50,56 @@ def _progress_color(pct: float) -> str:
     if pct >= 70:
         return '#f59e0b'
     return '#22d3ee'
+
+
+# 「离线设备」是虚拟分组，不存在于 custom_groups 里，只在探针页用来快速过滤
+OFFLINE_GROUP_LABEL = '🔴 离线设备'
+UNGROUPED_LABEL = '未分组'
+
+
+def _server_group_names(server_conf: dict) -> list[str]:
+    """一台服务器所属的分组名列表。
+
+    判定口径跟侧边栏 / 订阅保持一致：主分组存在 server_conf['group']，tags 是
+    额外挂上去的自定义分组，两者都算（参见 sidebar.render_sidebar_content）。
+    被监控且已掉线的机器再额外归入「离线设备」这个虚拟分组。
+    """
+    names: list[str] = []
+
+    primary = str(server_conf.get('group') or '').strip()
+    if primary:
+        names.append(primary)
+
+    custom_groups = ADMIN_CONFIG.get('custom_groups') or []
+    for tag in (server_conf.get('tags') or []):
+        if tag in custom_groups and tag not in names:
+            names.append(tag)
+
+    if not names:
+        names.append(UNGROUPED_LABEL)
+
+    if is_server_monitored(server_conf) and is_server_offline(server_conf):
+        names.append(OFFLINE_GROUP_LABEL)
+
+    return names
+
+
+def _probe_group_options() -> dict[str, str]:
+    """分组下拉框的选项：全部分组 → 离线设备 → 未分组 → 其余分组按名称排序。"""
+    found = set()
+    for server_conf in SERVERS_CACHE:
+        if not isinstance(server_conf, dict):
+            continue
+        found.update(_server_group_names(server_conf))
+
+    options = {'all': '全部分组'}
+    for pinned in (OFFLINE_GROUP_LABEL, UNGROUPED_LABEL):
+        if pinned in found:
+            options[pinned] = pinned
+            found.discard(pinned)
+    for name in sorted(found):
+        options[name] = name
+    return options
 
 
 def _build_server_snapshot(server_conf: dict) -> dict:
@@ -153,6 +203,25 @@ async def load_probe_page():
     content_container.style('background-color: var(--xf-bg-main);')
 
     with content_container:
+        @ui.refreshable
+        def render_probe_cards():
+            _render_probe_content(
+                is_dark,
+                search_term=search_input.value,
+                group_filter=group_select.value,
+            )
+
+        def refresh_all():
+            """定时重绘：服务器上下线 / 改分组后，下拉框的选项也要跟着变。"""
+            options = _probe_group_options()
+            if options != group_select.options:
+                group_select.set_options(
+                    options,
+                    # 选中的分组可能已经消失（机器被删或改了组），退回「全部分组」
+                    value=group_select.value if group_select.value in options else 'all',
+                )
+            render_probe_cards.refresh()
+
         with ui.row().classes(
                 'w-full items-center justify-between mb-4 border-b pb-3'
         ).style('border-color: var(--xf-card-border);'):
@@ -180,73 +249,42 @@ async def load_probe_page():
                     'background: var(--xf-soft-bg); '
                     'border-color: var(--xf-card-border);')
 
-        @ui.refreshable
-        def render_probe_cards():
-            _render_probe_content(is_dark)
+        with ui.row().classes('w-full items-center gap-3 mb-4 flex-wrap'):
+            search_input = ui.input(
+                placeholder='搜索服务器名称或 IP',
+                on_change=lambda _: render_probe_cards.refresh(),
+            ).props('dense outlined clearable debounce="300"').classes('w-[280px] max-w-full')
+
+            group_select = ui.select(
+                _probe_group_options(),
+                value='all',
+                on_change=lambda _: render_probe_cards.refresh(),
+            ).props('dense outlined').classes('w-[200px] max-w-full')
 
         render_probe_cards()
-        ui.timer(30.0, render_probe_cards.refresh)
+        ui.timer(30.0, refresh_all)
 
-def _render_probe_content(is_dark: bool, search_term: str = '', group_filter: str = 'all', group_select_ui=None):
+
+def _render_probe_content(is_dark: bool, search_term: str = '',
+                          group_filter: str = 'all'):
     """渲染探针监控的核心内容：统计概览 + 服务器卡片网格。"""
-    snapshots = []
-    
-    # 获取服务器的分组信息
-    def _get_server_groups(s: dict) -> list[str]:
-        tags = s.get('tags', [])
-        if not tags:
-            return []
-        
-        # 统一处理“离线”、“未监控”这类特殊分组标识，按您的逻辑
-        offline = is_server_offline(s)
-        monitored = is_server_monitored(s)
-        
-        assigned_groups = []
-        if offline and monitored:
-            assigned_groups.append('离线设备')
-            
-        custom_groups = ADMIN_CONFIG.get('custom_groups', [])
-        for t in tags:
-            if t in custom_groups:
-                assigned_groups.append(t)
-        
-        if not assigned_groups:
-             assigned_groups.append('未分组')
-        
-        return list(set(assigned_groups))
-    
-    all_groups_set = set()
-    for s in SERVERS_CACHE:
-        if not isinstance(s, dict):
-            continue
-        snap = _build_server_snapshot(s)
-        groups = _get_server_groups(s)
-        snap['groups'] = groups
-        for g in groups:
-            all_groups_set.add(g)
-        snapshots.append(snap)
-        
-    if group_select_ui:
-        options = {'all': '全部分组'}
-        if '离线设备' in all_groups_set:
-            options['离线设备'] = '离线设备'
-            all_groups_set.discard('离线设备')
-        if '未分组' in all_groups_set:
-            options['未分组'] = '未分组'
-            all_groups_set.discard('未分组')
-            
-        for g in sorted(list(all_groups_set)):
-            options[g] = g
-            
-        group_select_ui.options = options
-        group_select_ui.update()
+    from app.ui.pages.content_router import _match_server_search
 
-    if search_term:
-        term = search_term.lower()
-        snapshots = [s for s in snapshots if term in s['name'].lower()]
-        
-    if group_filter != 'all':
-        snapshots = [s for s in snapshots if group_filter in s['groups']]
+    keyword = str(search_term or '').strip()
+    group_filter = group_filter or 'all'
+
+    snapshots = []
+    for server_conf in SERVERS_CACHE:
+        if not isinstance(server_conf, dict):
+            continue
+        if keyword and not _match_server_search(server_conf, keyword):
+            continue
+        groups = _server_group_names(server_conf)
+        if group_filter != 'all' and group_filter not in groups:
+            continue
+        snap = _build_server_snapshot(server_conf)
+        snap['groups'] = groups
+        snapshots.append(snap)
 
     total = len(snapshots)
     online_count = sum(1 for snap in snapshots if snap['online'])
@@ -277,9 +315,11 @@ def _render_probe_content(is_dark: bool, search_term: str = '', group_filter: st
             stat_card_cls)
 
     if not snapshots:
+        filtering = bool(keyword) or group_filter != 'all'
         with ui.column().classes('w-full h-64 justify-center items-center'):
             ui.icon('inbox', size='4rem').style('color: var(--xf-text-muted);')
-            ui.label('暂无服务器').classes('text-sm font-bold').style(
+            ui.label('未找到匹配的服务器' if filtering else '暂无服务器') \
+                .classes('text-sm font-bold').style(
                 'color: var(--xf-text-muted);')
         return
 
