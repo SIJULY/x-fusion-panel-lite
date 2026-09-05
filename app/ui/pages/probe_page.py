@@ -284,7 +284,8 @@ def _render_probe_content(is_dark: bool, search_term: str = '', group_filter: st
         return
 
     def sort_key(snap):
-        priority = 0 if snap['online'] else (1 if snap['offline'] else 2)
+        # 离线（被监控且不在线的）优先级最高（0），然后是在线（1），未监控排最后（2）
+        priority = 0 if snap['offline'] else (1 if snap['online'] else 2)
         return (priority, snap['name'].lower())
 
     snapshots.sort(key=sort_key)
