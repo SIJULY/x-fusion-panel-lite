@@ -16,6 +16,7 @@ import time
 from nicegui import app, ui
 
 from app.core.state import (
+    ADMIN_CONFIG,
     CURRENT_VIEW_STATE,
     PROBE_DATA_CACHE,
     SERVERS_CACHE,
@@ -186,15 +187,66 @@ async def load_probe_page():
         render_probe_cards()
         ui.timer(30.0, render_probe_cards.refresh)
 
-
-
-def _render_probe_content(is_dark: bool):
+def _render_probe_content(is_dark: bool, search_term: str = '', group_filter: str = 'all', group_select_ui=None):
     """渲染探针监控的核心内容：统计概览 + 服务器卡片网格。"""
     snapshots = []
+    
+    # 获取服务器的分组信息
+    def _get_server_groups(s: dict) -> list[str]:
+        tags = s.get('tags', [])
+        if not tags:
+            return []
+        
+        # 统一处理“离线”、“未监控”这类特殊分组标识，按您的逻辑
+        offline = is_server_offline(s)
+        monitored = is_server_monitored(s)
+        
+        assigned_groups = []
+        if offline and monitored:
+            assigned_groups.append('离线设备')
+            
+        custom_groups = ADMIN_CONFIG.get('custom_groups', [])
+        for t in tags:
+            if t in custom_groups:
+                assigned_groups.append(t)
+        
+        if not assigned_groups:
+             assigned_groups.append('未分组')
+        
+        return list(set(assigned_groups))
+    
+    all_groups_set = set()
     for s in SERVERS_CACHE:
         if not isinstance(s, dict):
             continue
-        snapshots.append(_build_server_snapshot(s))
+        snap = _build_server_snapshot(s)
+        groups = _get_server_groups(s)
+        snap['groups'] = groups
+        for g in groups:
+            all_groups_set.add(g)
+        snapshots.append(snap)
+        
+    if group_select_ui:
+        options = {'all': '全部分组'}
+        if '离线设备' in all_groups_set:
+            options['离线设备'] = '离线设备'
+            all_groups_set.discard('离线设备')
+        if '未分组' in all_groups_set:
+            options['未分组'] = '未分组'
+            all_groups_set.discard('未分组')
+            
+        for g in sorted(list(all_groups_set)):
+            options[g] = g
+            
+        group_select_ui.options = options
+        group_select_ui.update()
+
+    if search_term:
+        term = search_term.lower()
+        snapshots = [s for s in snapshots if term in s['name'].lower()]
+        
+    if group_filter != 'all':
+        snapshots = [s for s in snapshots if group_filter in s['groups']]
 
     total = len(snapshots)
     online_count = sum(1 for snap in snapshots if snap['online'])
