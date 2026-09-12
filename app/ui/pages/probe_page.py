@@ -527,32 +527,31 @@ def _render_card_header(snap, status_color, status_text,
     ).style(f'border-color: {border_accent};'):
         with ui.row().classes('items-center gap-2 overflow-hidden'):
             os_name = snap['os'].lower() if snap['os'] else ''
-            os_icon = 'ubuntu' if 'ubuntu' in os_name else 'debian' if 'debian' in os_name else 'centos' if 'centos' in os_name else 'windows' if 'windows' in os_name else 'linux' if 'linux' in os_name else 'dns'
+            # Using custom icon mapping since mdi icons like 'ubuntu' might not exist directly without the 'mdi-' prefix, 
+            # and to align with the provided screenshot styling where OS icons are missing.
+            os_icon = 'img:https://upload.wikimedia.org/wikipedia/commons/a/ab/Logo-ubuntu_cof-orange-hex.svg' if 'ubuntu' in os_name else 'img:https://upload.wikimedia.org/wikipedia/commons/6/66/Openlogo-debianV2.svg' if 'debian' in os_name else 'img:https://upload.wikimedia.org/wikipedia/commons/9/9e/CentOS_Icon.svg' if 'centos' in os_name else 'img:https://upload.wikimedia.org/wikipedia/commons/5/5f/Windows_logo_-_2012.svg' if 'windows' in os_name else 'img:https://upload.wikimedia.org/wikipedia/commons/3/35/Tux.svg' if 'linux' in os_name else 'dns'
             
             # If offline, grey out the icon
             icon_color = 'var(--xf-text-subtle)' if snap['offline'] else (
                 '#E95420' if 'ubuntu' in os_name else '#D70A53' if 'debian' in os_name else '#262577' if 'centos' in os_name else '#0078D6' if 'windows' in os_name else 'var(--xf-accent)'
             )
-            ui.icon(os_icon).classes('text-base flex-shrink-0').style(
-                f'color: {icon_color};')
             
-            # Country icon if available in name
-            name_parts = snap['name'].split(' ')
-            if len(name_parts) > 1 and len(name_parts[0]) == 2: # heuristic for flag emoji
-                flag = name_parts[0]
-                display_name = ' '.join(name_parts[1:])
+            if not snap['monitored'] or snap['offline']:
+                ui.icon('dns').classes('text-base flex-shrink-0').style(f'color: {icon_color};')
             else:
-                flag = '🍃' # default leaf emoji as in screenshot
-                display_name = snap['name']
-                
-            # flag and name directly, no extra margin
-            ui.label(flag).classes('text-sm flex-shrink-0').style('margin-right: -4px;')
+                if os_icon.startswith('img:'):
+                    ui.image(os_icon[4:]).classes('w-4 h-4 flex-shrink-0')
+                else:
+                    ui.icon(os_icon).classes('text-base flex-shrink-0').style(f'color: {icon_color};')
+            
+            # default leaf emoji as in screenshot
+            ui.label('🍃').classes('text-sm flex-shrink-0').style('margin-right: -4px;')
                 
             # 悬停变色只用 CSS：挂 mouseenter/mouseleave 回调的话每次划过鼠标
             # 都要走一趟服务端，代价和收益完全不成比例
             # Text should reflect offline status (e.g. grayed out if offline)
             text_color = 'var(--xf-text-subtle)' if snap['offline'] else 'var(--xf-text-strong)'
-            name_label = ui.label(display_name).classes(
+            name_label = ui.label(snap['name']).classes(
                 'text-sm font-black truncate cursor-pointer hover:underline'
             ).style(f'color: {text_color};')
             # url 在这里就绑定好，否则闭包会共享循环变量，所有卡片都指向最后一台
