@@ -589,72 +589,82 @@ def _render_card_sysinfo(snap):
 
 
 def _render_card_metrics(snap):
-    """
-    修改为紧凑的圆形进度条样式（CPU，内存，磁盘），右侧为网络状态和 IO/流量 统计。
-    """
-    unknown = snap['cpu_pct'] is None
-    with ui.row().classes('w-full px-4 py-3 justify-between items-center'):
-        # CPU
-        with ui.column().classes('items-center gap-1'):
-            ui.label('CPU').classes('text-[12px] font-bold').style('color: var(--xf-text-strong);')
-            _render_circular_progress(snap['cpu_pct'], '#22c55e' if not unknown and snap['cpu_pct'] < 90 else '#ef4444')
-            cores = f"{snap['cpu_cores']} C" if snap['cpu_cores'] else '--'
-            ui.label(cores).classes('text-[11px] font-bold').style('color: var(--xf-text-strong);')
+    """探针卡片指标区：标题统一对齐，左右指标区高度协调。"""
+    unknown_cpu = snap['cpu_pct'] is None
+    unknown_mem = snap['mem_pct'] is None
+    unknown_disk = snap['disk_pct'] is None
 
-        # Mem
-        with ui.column().classes('items-center gap-1'):
-            ui.label('Mem').classes('text-[12px] font-bold').style('color: var(--xf-text-strong);')
-            _render_circular_progress(snap['mem_pct'], '#22c55e' if not unknown and snap['mem_pct'] < 90 else '#ef4444')
-            mem_text = f"{snap['mem_total_gb']:.1f} M" if snap['mem_total_gb'] < 1 else f"{snap['mem_total_gb']:.1f} G"
-            # format as MB if small, else GB (assuming the original value was GB, but screenshot shows 996.2 M, likely actually MB)
-            # Actually snap['mem_total_gb'] is in GB usually based on variable name. Let's adapt
-            if snap['mem_total_gb'] * 1024 < 1000 and snap['mem_total_gb'] < 1:
-                mem_text = f"{snap['mem_total_gb'] * 1024:.1f} M"
-            else:
-                mem_text = f"{snap['mem_total_gb']:.1f} G"
-                
-            ui.label(mem_text).classes('text-[11px] font-bold').style('color: var(--xf-text-strong);')
+    up_color = '#22c55e' if not snap['offline'] else 'var(--xf-text-subtle)'
+    down_color = '#38bdf8' if not snap['offline'] else 'var(--xf-text-subtle)'
 
-        # Disk
-        with ui.column().classes('items-center gap-1'):
-            ui.label('磁盘').classes('text-[12px] font-bold').style('color: var(--xf-text-strong);')
-            _render_circular_progress(snap['disk_pct'], '#22c55e' if not unknown and snap['disk_pct'] < 90 else '#ef4444')
-            disk_text = f"{snap['disk_total_gb']:.1f} G"
-            ui.label(disk_text).classes('text-[11px] font-bold').style('color: var(--xf-text-strong);')
-            
-        # Network
-        with ui.column().classes('items-center justify-between h-full py-1'):
-            ui.label('网络').classes('text-[12px] font-bold mb-1').style('color: var(--xf-text-strong);')
-            
-            with ui.row().classes('items-center gap-1'):
-                ui.label('↑').classes('text-[11px]').style('color: var(--xf-text-strong);')
-                ui.label(_format_speed(snap['speed_out']) if snap['speed_out'] is not None else '0 B').classes('text-[11px]').style('color: var(--xf-text-strong);')
-            
-            # The total transferred bytes shown here were a duplicate. In the screenshot, this space is empty or shows something else. We'll leave an empty label for spacing.
-            ui.label('').classes('text-[10px] h-3.5')
-            
-            with ui.row().classes('items-center gap-1'):
-                ui.label('↓').classes('text-[11px]').style('color: var(--xf-text-strong);')
-                ui.label(_format_speed(snap['speed_in']) if snap['speed_in'] is not None else '0 B').classes('text-[11px]').style('color: var(--xf-text-strong);')
-                
-            ui.label('').classes('text-[10px] h-3.5')
+    title_class = 'text-[13px] font-black leading-none h-5 flex items-center justify-center'
+    value_class = 'text-[13px] font-black leading-none'
+    cell_class = 'min-w-[74px] flex-1'
 
-        # Traffic / IO
-        with ui.column().classes('items-center justify-between h-full py-1'):
-            ui.label('I/O').classes('text-[12px] font-bold mb-1').style('color: var(--xf-text-strong);')
-            
-            with ui.row().classes('items-center gap-1'):
-                ui.label('↑').classes('text-[11px]').style('color: var(--xf-text-strong);')
-                # 显示上下行流量总计
-                ui.label(format_bytes(snap['net_out']) if snap['net_out'] else '0 B').classes('text-[11px]').style('color: var(--xf-text-strong);')
-                
-            ui.label('').classes('text-[10px] h-3.5') # padding
-            
-            with ui.row().classes('items-center gap-1'):
-                ui.label('↓').classes('text-[11px]').style('color: var(--xf-text-strong);')
-                ui.label(format_bytes(snap['net_in']) if snap['net_in'] else '0 B').classes('text-[11px]').style('color: var(--xf-text-strong);')
-                
-            ui.label('').classes('text-[10px] h-3.5') # padding
+    with ui.column().classes('w-full px-4 py-4 gap-4'):
+        # 五个标题独立成同一行，避免各列内部高度差导致标题错位。
+        with ui.row().classes('w-full items-center justify-between'):
+            for title in ('CPU', 'Mem', '磁盘', '网络', 'I/O'):
+                ui.label(title).classes(f'{title_class} {cell_class}').style('color: var(--xf-text-strong);')
+
+        with ui.row().classes('w-full items-center justify-between'):
+            # CPU
+            with ui.column().classes(f'items-center gap-3 {cell_class}'):
+                _render_circular_progress(
+                    snap['cpu_pct'],
+                    '#22c55e' if not unknown_cpu and snap['cpu_pct'] < 90 else '#ef4444',
+                )
+                cores = f"{snap['cpu_cores']} C" if snap['cpu_cores'] else '--'
+                ui.label(cores).classes(value_class).style('color: var(--xf-text-strong);')
+
+            # Mem
+            with ui.column().classes(f'items-center gap-3 {cell_class}'):
+                _render_circular_progress(
+                    snap['mem_pct'],
+                    '#22c55e' if not unknown_mem and snap['mem_pct'] < 90 else '#ef4444',
+                )
+                if snap['mem_total_gb'] * 1024 < 1000 and snap['mem_total_gb'] < 1:
+                    mem_text = f"{snap['mem_total_gb'] * 1024:.1f} M"
+                else:
+                    mem_text = f"{snap['mem_total_gb']:.1f} G"
+                ui.label(mem_text).classes(value_class).style('color: var(--xf-text-strong);')
+
+            # Disk
+            with ui.column().classes(f'items-center gap-3 {cell_class}'):
+                _render_circular_progress(
+                    snap['disk_pct'],
+                    '#22c55e' if not unknown_disk and snap['disk_pct'] < 90 else '#ef4444',
+                )
+                disk_text = f"{snap['disk_total_gb']:.1f} G"
+                ui.label(disk_text).classes(value_class).style('color: var(--xf-text-strong);')
+
+            # Network：去掉空 label 和 justify-between，压缩上下两行间距。
+            with ui.column().classes(f'items-center justify-center gap-6 {cell_class}'):
+                with ui.row().classes('items-center justify-center gap-2 leading-none'):
+                    ui.label('↑').classes('text-[18px] font-black leading-none').style(f'color: {up_color};')
+                    ui.label(_format_speed(snap['speed_out']) if snap['speed_out'] is not None else '0 B').classes(
+                        'text-[13px] font-bold leading-none whitespace-nowrap'
+                    ).style(f'color: {up_color};')
+
+                with ui.row().classes('items-center justify-center gap-2 leading-none'):
+                    ui.label('↓').classes('text-[18px] font-black leading-none').style(f'color: {down_color};')
+                    ui.label(_format_speed(snap['speed_in']) if snap['speed_in'] is not None else '0 B').classes(
+                        'text-[13px] font-bold leading-none whitespace-nowrap'
+                    ).style(f'color: {down_color};')
+
+            # I/O：与 Network 保持完全相同结构与高度。
+            with ui.column().classes(f'items-center justify-center gap-6 {cell_class}'):
+                with ui.row().classes('items-center justify-center gap-2 leading-none'):
+                    ui.label('↑').classes('text-[18px] font-black leading-none').style(f'color: {up_color};')
+                    ui.label(format_bytes(snap['net_out']) if snap['net_out'] else '0 B').classes(
+                        'text-[13px] font-bold leading-none whitespace-nowrap'
+                    ).style(f'color: {up_color};')
+
+                with ui.row().classes('items-center justify-center gap-2 leading-none'):
+                    ui.label('↓').classes('text-[18px] font-black leading-none').style(f'color: {down_color};')
+                    ui.label(format_bytes(snap['net_in']) if snap['net_in'] else '0 B').classes(
+                        'text-[13px] font-bold leading-none whitespace-nowrap'
+                    ).style(f'color: {down_color};')
 
 def _render_circular_progress(pct, color):
     unknown = pct is None
@@ -665,12 +675,12 @@ def _render_circular_progress(pct, color):
     active_color = 'var(--xf-text-subtle)' if unknown else color
     
     with ui.element('div').classes('relative flex items-center justify-center rounded-full').style(
-        f'width: 44px; height: 44px; background: conic-gradient({active_color} {deg}deg, {bg_color} {deg}deg);'
+        f'width: 54px; height: 54px; background: conic-gradient({active_color} {deg}deg, {bg_color} {deg}deg);'
     ):
         with ui.element('div').classes('absolute flex items-center justify-center rounded-full').style(
-            'width: 36px; height: 36px; background: var(--xf-panel-bg);'
+            'width: 44px; height: 44px; background: var(--xf-panel-bg);'
         ):
-            ui.label(value_text).classes('text-[11px] font-bold').style(f'color: {active_color};')
+            ui.label(value_text).classes('text-[13px] font-black').style(f'color: {active_color};')
 
 
 def _render_card_footer(snap, border_accent):
