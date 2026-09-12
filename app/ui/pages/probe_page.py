@@ -589,7 +589,7 @@ def _render_card_sysinfo(snap):
 
 
 def _render_card_metrics(snap):
-    """探针卡片指标区：标题统一对齐，左右指标区高度协调。"""
+    """探针卡片指标区：用同一个 5 列 grid 固定标题和内容，避免缩放换行错位。"""
     unknown_cpu = snap['cpu_pct'] is None
     unknown_mem = snap['mem_pct'] is None
     unknown_disk = snap['disk_pct'] is None
@@ -599,15 +599,42 @@ def _render_card_metrics(snap):
 
     title_class = 'text-[13px] font-black leading-none h-5 flex items-center justify-center'
     value_class = 'text-[13px] font-black leading-none'
-    cell_class = 'min-w-[74px] flex-1'
+    metric_grid_style = (
+        'display: grid; '
+        'grid-template-columns: repeat(5, minmax(0, 1fr)); '
+        'column-gap: 8px; '
+        'align-items: start;'
+    )
+    cell_class = 'min-w-0 w-full overflow-visible'
+    traffic_row_class = (
+        'min-w-0 w-full items-center justify-center leading-none '
+        'whitespace-nowrap no-wrap'
+    )
+    traffic_row_style = (
+        'display: grid; '
+        'grid-template-columns: 18px minmax(0, max-content); '
+        'column-gap: 6px; '
+        'align-items: center; '
+        'justify-content: center;'
+    )
+
+    def _traffic_row(arrow: str, text: str, color: str):
+        # 箭头和值必须是同一个不可换行的小 grid，避免响应式压缩时拆开。
+        with ui.row().classes(traffic_row_class).style(traffic_row_style):
+            ui.label(arrow).classes(
+                'text-[18px] font-black leading-none text-center'
+            ).style(f'color: {color};')
+            ui.label(text).classes(
+                'text-[13px] font-bold leading-none whitespace-nowrap'
+            ).style(f'color: {color};')
 
     with ui.column().classes('w-full px-4 py-4 gap-4'):
-        # 五个标题独立成同一行，避免各列内部高度差导致标题错位。
-        with ui.row().classes('w-full items-center justify-between'):
+        # 标题和内容使用完全相同的 5 列 grid；不再用 flex row，防止 Network/I/O 被 wrap 到下一行。
+        with ui.element('div').classes('w-full').style(metric_grid_style):
             for title in ('CPU', 'Mem', '磁盘', '网络', 'I/O'):
                 ui.label(title).classes(f'{title_class} {cell_class}').style('color: var(--xf-text-strong);')
 
-        with ui.row().classes('w-full items-center justify-between'):
+        with ui.element('div').classes('w-full').style(metric_grid_style):
             # CPU
             with ui.column().classes(f'items-center gap-3 {cell_class}'):
                 _render_circular_progress(
@@ -638,33 +665,31 @@ def _render_card_metrics(snap):
                 disk_text = f"{snap['disk_total_gb']:.1f} G"
                 ui.label(disk_text).classes(value_class).style('color: var(--xf-text-strong);')
 
-            # Network：去掉空 label 和 justify-between，压缩上下两行间距。
+            # Network：两行固定在同一列内，箭头和值不允许拆行。
             with ui.column().classes(f'items-center justify-center gap-6 {cell_class}'):
-                with ui.row().classes('items-center justify-center gap-2 leading-none'):
-                    ui.label('↑').classes('text-[18px] font-black leading-none').style(f'color: {up_color};')
-                    ui.label(_format_speed(snap['speed_out']) if snap['speed_out'] is not None else '0 B').classes(
-                        'text-[13px] font-bold leading-none whitespace-nowrap'
-                    ).style(f'color: {up_color};')
-
-                with ui.row().classes('items-center justify-center gap-2 leading-none'):
-                    ui.label('↓').classes('text-[18px] font-black leading-none').style(f'color: {down_color};')
-                    ui.label(_format_speed(snap['speed_in']) if snap['speed_in'] is not None else '0 B').classes(
-                        'text-[13px] font-bold leading-none whitespace-nowrap'
-                    ).style(f'color: {down_color};')
+                _traffic_row(
+                    '↑',
+                    _format_speed(snap['speed_out']) if snap['speed_out'] is not None else '0 B/s',
+                    up_color,
+                )
+                _traffic_row(
+                    '↓',
+                    _format_speed(snap['speed_in']) if snap['speed_in'] is not None else '0 B/s',
+                    down_color,
+                )
 
             # I/O：与 Network 保持完全相同结构与高度。
             with ui.column().classes(f'items-center justify-center gap-6 {cell_class}'):
-                with ui.row().classes('items-center justify-center gap-2 leading-none'):
-                    ui.label('↑').classes('text-[18px] font-black leading-none').style(f'color: {up_color};')
-                    ui.label(format_bytes(snap['net_out']) if snap['net_out'] else '0 B').classes(
-                        'text-[13px] font-bold leading-none whitespace-nowrap'
-                    ).style(f'color: {up_color};')
-
-                with ui.row().classes('items-center justify-center gap-2 leading-none'):
-                    ui.label('↓').classes('text-[18px] font-black leading-none').style(f'color: {down_color};')
-                    ui.label(format_bytes(snap['net_in']) if snap['net_in'] else '0 B').classes(
-                        'text-[13px] font-bold leading-none whitespace-nowrap'
-                    ).style(f'color: {down_color};')
+                _traffic_row(
+                    '↑',
+                    format_bytes(snap['net_out']) if snap['net_out'] else '0 B',
+                    up_color,
+                )
+                _traffic_row(
+                    '↓',
+                    format_bytes(snap['net_in']) if snap['net_in'] else '0 B',
+                    down_color,
+                )
 
 def _render_circular_progress(pct, color):
     unknown = pct is None
