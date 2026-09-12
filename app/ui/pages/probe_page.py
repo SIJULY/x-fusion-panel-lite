@@ -520,6 +520,8 @@ async def _open_single_server(server_url: str):
 
 def _render_card_header(snap, status_color, status_text,
                         status_icon, border_accent):
+    # 根据离线状态调整 border 颜色，如果是离线，border 可能需要稍微明显一点？原代码是用 border_accent，这部分可以不动。
+    
     with ui.row().classes(
             'w-full items-center justify-between px-4 py-3 border-b'
     ).style(f'border-color: {border_accent};'):
@@ -527,7 +529,10 @@ def _render_card_header(snap, status_color, status_text,
             os_name = snap['os'].lower() if snap['os'] else ''
             os_icon = 'ubuntu' if 'ubuntu' in os_name else 'debian' if 'debian' in os_name else 'centos' if 'centos' in os_name else 'windows' if 'windows' in os_name else 'linux' if 'linux' in os_name else 'dns'
             
-            icon_color = '#E95420' if 'ubuntu' in os_name else '#D70A53' if 'debian' in os_name else '#262577' if 'centos' in os_name else '#0078D6' if 'windows' in os_name else 'var(--xf-accent)'
+            # If offline, grey out the icon
+            icon_color = 'var(--xf-text-subtle)' if snap['offline'] else (
+                '#E95420' if 'ubuntu' in os_name else '#D70A53' if 'debian' in os_name else '#262577' if 'centos' in os_name else '#0078D6' if 'windows' in os_name else 'var(--xf-accent)'
+            )
             ui.icon(os_icon).classes('text-base flex-shrink-0').style(
                 f'color: {icon_color};')
             
@@ -540,22 +545,31 @@ def _render_card_header(snap, status_color, status_text,
                 flag = '🍃' # default leaf emoji as in screenshot
                 display_name = snap['name']
                 
-            ui.label(flag).classes('text-sm')
+            # flag and name directly, no extra margin
+            ui.label(flag).classes('text-sm flex-shrink-0').style('margin-right: -4px;')
                 
             # 悬停变色只用 CSS：挂 mouseenter/mouseleave 回调的话每次划过鼠标
             # 都要走一趟服务端，代价和收益完全不成比例
+            # Text should reflect offline status (e.g. grayed out if offline)
+            text_color = 'var(--xf-text-subtle)' if snap['offline'] else 'var(--xf-text-strong)'
             name_label = ui.label(display_name).classes(
                 'text-sm font-black truncate cursor-pointer hover:underline'
-            ).style('color: var(--xf-text-strong);')
+            ).style(f'color: {text_color};')
             # url 在这里就绑定好，否则闭包会共享循环变量，所有卡片都指向最后一台
             name_label.on('click', partial(_open_single_server, snap['url']))
             name_label.tooltip('点击查看单机详情')
+            
         with ui.row().classes('items-center gap-1.5 flex-shrink-0'):
             uptime = snap['uptime'] if snap['uptime'] else '--'
             load_1 = f"{snap['load_1']:.1f}" if snap['load_1'] is not None else '--'
             
-            ui.icon('power_settings_new').classes('text-xs').style('color: var(--xf-text-subtle);')
-            ui.label(uptime).classes('text-[11px] font-bold').style('color: var(--xf-text-subtle);')
+            uptime_color = '#ef4444' if snap['offline'] else ('#22c55e' if snap['online'] else 'var(--xf-text-subtle)')
+            icon_uptime_color = '#ef4444' if snap['offline'] else ('#22c55e' if snap['online'] else 'var(--xf-text-subtle)')
+            
+            ui.icon('power_settings_new').classes('text-xs').style(f'color: {icon_uptime_color};')
+            ui.label(uptime).classes('text-[11px] font-bold').style(f'color: {uptime_color};')
+            
+            # Load
             ui.icon('show_chart').classes('text-xs ml-1').style('color: var(--xf-text-subtle);')
             ui.label(load_1).classes('text-[11px] font-bold').style('color: var(--xf-text-subtle);')
 
@@ -617,13 +631,14 @@ def _render_card_metrics(snap):
                 ui.label('↑').classes('text-[11px]').style('color: var(--xf-text-strong);')
                 ui.label(_format_speed(snap['speed_out']) if snap['speed_out'] is not None else '0 B').classes('text-[11px]').style('color: var(--xf-text-strong);')
             
-            ui.label(format_bytes(snap['net_out']) if snap['net_out'] else '0 B').classes('text-[10px]').style('color: var(--xf-text-subtle);')
+            # The total transferred bytes shown here were a duplicate. In the screenshot, this space is empty or shows something else. We'll leave an empty label for spacing.
+            ui.label('').classes('text-[10px] h-3.5')
             
             with ui.row().classes('items-center gap-1'):
                 ui.label('↓').classes('text-[11px]').style('color: var(--xf-text-strong);')
                 ui.label(_format_speed(snap['speed_in']) if snap['speed_in'] is not None else '0 B').classes('text-[11px]').style('color: var(--xf-text-strong);')
                 
-            ui.label(format_bytes(snap['net_in']) if snap['net_in'] else '0 B').classes('text-[10px]').style('color: var(--xf-text-subtle);')
+            ui.label('').classes('text-[10px] h-3.5')
 
         # Traffic / IO
         with ui.column().classes('items-center justify-between h-full py-1'):
@@ -631,7 +646,7 @@ def _render_card_metrics(snap):
             
             with ui.row().classes('items-center gap-1'):
                 ui.label('↑').classes('text-[11px]').style('color: var(--xf-text-strong);')
-                # 简单显示上下行流量总计
+                # 显示上下行流量总计
                 ui.label(format_bytes(snap['net_out']) if snap['net_out'] else '0 B').classes('text-[11px]').style('color: var(--xf-text-strong);')
                 
             ui.label('').classes('text-[10px] h-3.5') # padding
