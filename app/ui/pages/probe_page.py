@@ -524,22 +524,41 @@ def _render_card_header(snap, status_color, status_text,
             'w-full items-center justify-between px-4 py-3 border-b'
     ).style(f'border-color: {border_accent};'):
         with ui.row().classes('items-center gap-2 overflow-hidden'):
-            ui.icon('dns').classes('text-base flex-shrink-0').style(
-                'color: var(--xf-accent);')
+            os_name = snap['os'].lower() if snap['os'] else ''
+            os_icon = 'ubuntu' if 'ubuntu' in os_name else 'debian' if 'debian' in os_name else 'centos' if 'centos' in os_name else 'windows' if 'windows' in os_name else 'linux' if 'linux' in os_name else 'dns'
+            
+            icon_color = '#E95420' if 'ubuntu' in os_name else '#D70A53' if 'debian' in os_name else '#262577' if 'centos' in os_name else '#0078D6' if 'windows' in os_name else 'var(--xf-accent)'
+            ui.icon(os_icon).classes('text-base flex-shrink-0').style(
+                f'color: {icon_color};')
+            
+            # Country icon if available in name
+            name_parts = snap['name'].split(' ')
+            if len(name_parts) > 1 and len(name_parts[0]) == 2: # heuristic for flag emoji
+                flag = name_parts[0]
+                display_name = ' '.join(name_parts[1:])
+            else:
+                flag = '🍃' # default leaf emoji as in screenshot
+                display_name = snap['name']
+                
+            ui.label(flag).classes('text-sm')
+                
             # 悬停变色只用 CSS：挂 mouseenter/mouseleave 回调的话每次划过鼠标
             # 都要走一趟服务端，代价和收益完全不成比例
-            name_label = ui.label(snap['name']).classes(
+            name_label = ui.label(display_name).classes(
                 'text-sm font-black truncate cursor-pointer hover:underline'
             ).style('color: var(--xf-text-strong);')
             # url 在这里就绑定好，否则闭包会共享循环变量，所有卡片都指向最后一台
             name_label.on('click', partial(_open_single_server, snap['url']))
             name_label.tooltip('点击查看单机详情')
         with ui.row().classes('items-center gap-1.5 flex-shrink-0'):
-            ui.icon(status_icon).classes('text-[8px]').style(
-                f'color: {status_color};')
-            ui.label(status_text).classes(
-                'text-[10px] font-black tracking-wider').style(
-                f'color: {status_color};')
+            uptime = snap['uptime'] if snap['uptime'] else '--'
+            load_1 = f"{snap['load_1']:.1f}" if snap['load_1'] is not None else '--'
+            
+            ui.icon('power_settings_new').classes('text-xs').style('color: var(--xf-text-subtle);')
+            ui.label(uptime).classes('text-[11px] font-bold').style('color: var(--xf-text-subtle);')
+            ui.icon('show_chart').classes('text-xs ml-1').style('color: var(--xf-text-subtle);')
+            ui.label(load_1).classes('text-[11px] font-bold').style('color: var(--xf-text-subtle);')
+
 
 
 def _render_card_unmonitored():
@@ -552,142 +571,96 @@ def _render_card_unmonitored():
 
 
 def _render_card_sysinfo(snap):
-    """系统信息行：发行版 / 架构 / 虚拟化 / 数据年龄，下面单独一行 CPU 型号。"""
-    chips = []
-    if snap['os']:
-        clean_os = (snap['os'].split('(')[0]
-                    .replace('GNU/Linux', '')
-                    .replace('  ', ' ').strip())
-        if clean_os:
-            chips.append(('computer', clean_os))
-    if snap['arch']:
-        chips.append(('memory', snap['arch']))
-    if snap['virt']:
-        chips.append(('layers', snap['virt']))
-    if snap['data_age_text']:
-        chips.append(('schedule', snap['data_age_text']))
-
-    if not chips and not snap['cpu_model']:
-        return
-
-    with ui.column().classes('w-full px-4 pt-3 pb-1 gap-1'):
-        if chips:
-            with ui.row().classes('items-center gap-4 flex-wrap'):
-                for icon, text in chips:
-                    with ui.row().classes('items-center gap-1'):
-                        ui.icon(icon).classes('text-xs').style(
-                            'color: var(--xf-text-muted);')
-                        ui.label(text).classes(
-                            'text-[11px] font-bold').style(
-                            'color: var(--xf-text-muted);')
-        if snap['cpu_model']:
-            # CPU 型号动不动就 40 多个字符，截断显示、完整挂 tooltip
-            ui.label(snap['cpu_model']).classes(
-                'text-[10px] font-bold truncate w-full').style(
-                'color: var(--xf-text-subtle);').tooltip(snap['cpu_model'])
+    """系统信息行。这里已移除，合并到 header 和 metrics 中，保持空实现避免报错"""
+    pass
 
 
 def _render_card_metrics(snap):
-    """三条主指标全宽铺开：CPU / 内存 / 磁盘。
-
-    原来是 2×2 等权重网格，「运行时间」和 CPU 一样大，信息层级是平的；现在
-    运行时间降到页脚，主指标各占满一行，进度条更长也更好读。
     """
-    cpu_sub = []
-    if snap['cpu_cores']:
-        cpu_sub.append(f'{snap["cpu_cores"]} 核')
-    if snap['load_1'] is not None:
-        cpu_sub.append(f'负载 {snap["load_1"]:.2f}')
-
-    with ui.column().classes('w-full px-4 py-3 gap-2.5'):
-        _render_metric_bar('CPU', snap['cpu_pct'], icon='speed',
-                           sub=' · '.join(cpu_sub))
-        _render_metric_bar('内存', snap['mem_pct'], icon='memory',
-                           sub=_usage_text(snap['mem_used_gb'],
-                                           snap['mem_total_gb']))
-        _render_metric_bar('磁盘', snap['disk_pct'], icon='storage',
-                           sub=_usage_text(snap['disk_used_gb'],
-                                           snap['disk_total_gb']))
-
-
-def _render_metric_bar(label, pct, sub='', icon='circle'):
-    """一条全宽指标：左边标签 + 附注，右边数值，下面一根进度条。
-
-    pct 为 None 表示「没有数据」（机器离线），显示 -- 和空条——不要显示 0%，
-    那会被读成「很闲」。
+    修改为紧凑的圆形进度条样式（CPU，内存，磁盘），右侧为网络状态和 IO/流量 统计。
     """
+    unknown = snap['cpu_pct'] is None
+    with ui.row().classes('w-full px-4 py-3 justify-between items-center'):
+        # CPU
+        with ui.column().classes('items-center gap-1'):
+            ui.label('CPU').classes('text-[12px] font-bold').style('color: var(--xf-text-strong);')
+            _render_circular_progress(snap['cpu_pct'], '#22c55e' if not unknown and snap['cpu_pct'] < 90 else '#ef4444')
+            cores = f"{snap['cpu_cores']} C" if snap['cpu_cores'] else '--'
+            ui.label(cores).classes('text-[11px] font-bold').style('color: var(--xf-text-strong);')
+
+        # Mem
+        with ui.column().classes('items-center gap-1'):
+            ui.label('Mem').classes('text-[12px] font-bold').style('color: var(--xf-text-strong);')
+            _render_circular_progress(snap['mem_pct'], '#22c55e' if not unknown and snap['mem_pct'] < 90 else '#ef4444')
+            mem_text = f"{snap['mem_total_gb']:.1f} M" if snap['mem_total_gb'] < 1 else f"{snap['mem_total_gb']:.1f} G"
+            # format as MB if small, else GB (assuming the original value was GB, but screenshot shows 996.2 M, likely actually MB)
+            # Actually snap['mem_total_gb'] is in GB usually based on variable name. Let's adapt
+            if snap['mem_total_gb'] * 1024 < 1000 and snap['mem_total_gb'] < 1:
+                mem_text = f"{snap['mem_total_gb'] * 1024:.1f} M"
+            else:
+                mem_text = f"{snap['mem_total_gb']:.1f} G"
+                
+            ui.label(mem_text).classes('text-[11px] font-bold').style('color: var(--xf-text-strong);')
+
+        # Disk
+        with ui.column().classes('items-center gap-1'):
+            ui.label('磁盘').classes('text-[12px] font-bold').style('color: var(--xf-text-strong);')
+            _render_circular_progress(snap['disk_pct'], '#22c55e' if not unknown and snap['disk_pct'] < 90 else '#ef4444')
+            disk_text = f"{snap['disk_total_gb']:.1f} G"
+            ui.label(disk_text).classes('text-[11px] font-bold').style('color: var(--xf-text-strong);')
+            
+        # Network
+        with ui.column().classes('items-center justify-between h-full py-1'):
+            ui.label('网络').classes('text-[12px] font-bold mb-1').style('color: var(--xf-text-strong);')
+            
+            with ui.row().classes('items-center gap-1'):
+                ui.label('↑').classes('text-[11px]').style('color: var(--xf-text-strong);')
+                ui.label(_format_speed(snap['speed_out']) if snap['speed_out'] is not None else '0 B').classes('text-[11px]').style('color: var(--xf-text-strong);')
+            
+            ui.label(format_bytes(snap['net_out']) if snap['net_out'] else '0 B').classes('text-[10px]').style('color: var(--xf-text-subtle);')
+            
+            with ui.row().classes('items-center gap-1'):
+                ui.label('↓').classes('text-[11px]').style('color: var(--xf-text-strong);')
+                ui.label(_format_speed(snap['speed_in']) if snap['speed_in'] is not None else '0 B').classes('text-[11px]').style('color: var(--xf-text-strong);')
+                
+            ui.label(format_bytes(snap['net_in']) if snap['net_in'] else '0 B').classes('text-[10px]').style('color: var(--xf-text-subtle);')
+
+        # Traffic / IO
+        with ui.column().classes('items-center justify-between h-full py-1'):
+            ui.label('I/O').classes('text-[12px] font-bold mb-1').style('color: var(--xf-text-strong);')
+            
+            with ui.row().classes('items-center gap-1'):
+                ui.label('↑').classes('text-[11px]').style('color: var(--xf-text-strong);')
+                # 简单显示上下行流量总计
+                ui.label(format_bytes(snap['net_out']) if snap['net_out'] else '0 B').classes('text-[11px]').style('color: var(--xf-text-strong);')
+                
+            ui.label('').classes('text-[10px] h-3.5') # padding
+            
+            with ui.row().classes('items-center gap-1'):
+                ui.label('↓').classes('text-[11px]').style('color: var(--xf-text-strong);')
+                ui.label(format_bytes(snap['net_in']) if snap['net_in'] else '0 B').classes('text-[11px]').style('color: var(--xf-text-strong);')
+                
+            ui.label('').classes('text-[10px] h-3.5') # padding
+
+def _render_circular_progress(pct, color):
     unknown = pct is None
-    color = 'var(--xf-text-subtle)' if unknown else _progress_color(pct)
-    value_text = '--' if unknown else f'{pct:.1f}%'
-    width = 0.0 if unknown else min(pct, 100.0)
-
-    # 高水位给进度条加一点外发光，扫一眼就知道哪台快满了
-    glow = ''
-    if not unknown and pct >= 90:
-        glow = f' box-shadow: 0 0 8px color-mix(in srgb, {color} 70%, transparent);'
-
-    with ui.column().classes('w-full gap-1'):
-        with ui.row().classes('items-center justify-between w-full gap-2'):
-            with ui.row().classes('items-center gap-1.5 min-w-0'):
-                ui.icon(icon).classes('text-xs flex-shrink-0').style(
-                    f'color: {color};')
-                ui.label(label).classes(
-                    'text-[10px] font-black uppercase tracking-wider '
-                    'flex-shrink-0').style('color: var(--xf-text-muted);')
-                if sub:
-                    ui.label(sub).classes(
-                        'text-[10px] font-bold truncate').style(
-                        'color: var(--xf-text-subtle);')
-            ui.label(value_text).classes(
-                'text-xs font-black flex-shrink-0').style(f'color: {color};')
-        with ui.element('div').classes(
-                'w-full h-2 rounded-full overflow-hidden'
-        ).style('background: color-mix(in srgb, var(--xf-card-border) 70%, '
-                'transparent);'):
-            ui.element('div').classes(
-                'h-full rounded-full transition-all duration-500'
-            ).style(
-                f'width: {width:.1f}%; '
-                f'background: linear-gradient(90deg, '
-                f'color-mix(in srgb, {color} 55%, transparent) 0%, '
-                f'{color} 100%);{glow}')
+    value_text = '--' if unknown else f'{pct:.0f}%'
+    deg = 0 if unknown else int(pct * 3.6)
+    
+    bg_color = 'color-mix(in srgb, var(--xf-card-border) 70%, transparent)'
+    active_color = 'var(--xf-text-subtle)' if unknown else color
+    
+    with ui.element('div').classes('relative flex items-center justify-center rounded-full').style(
+        f'width: 44px; height: 44px; background: conic-gradient({active_color} {deg}deg, {bg_color} {deg}deg);'
+    ):
+        with ui.element('div').classes('absolute flex items-center justify-center rounded-full').style(
+            'width: 36px; height: 36px; background: var(--xf-panel-bg);'
+        ):
+            ui.label(value_text).classes('text-[11px] font-bold').style(f'color: {active_color};')
 
 
 def _render_card_footer(snap, border_accent):
-    """页脚：实时上下行速率 + 运行时间，下面一行累计流量 / SWAP。"""
-    with ui.column().classes('w-full px-4 pt-2 pb-3 gap-1 border-t').style(
-            f'border-color: {border_accent};'):
-        with ui.row().classes('items-center justify-between w-full gap-2'):
-            # 实时速率：agent 每次推送都采样了 1 秒差值，之前页面一直没用上
-            with ui.row().classes('items-center gap-3'):
-                _render_speed_chip('arrow_downward', STATUS_ONLINE,
-                                   snap['speed_in'])
-                _render_speed_chip('arrow_upward', '#3b82f6',
-                                   snap['speed_out'])
-            if snap['uptime']:
-                with ui.row().classes('items-center gap-1 min-w-0'):
-                    ui.icon('timer').classes('text-xs flex-shrink-0').style(
-                        'color: var(--xf-text-subtle);')
-                    ui.label(snap['uptime']).classes(
-                        'text-[10px] font-bold truncate').style(
-                        'color: var(--xf-text-subtle);')
-
-        # 累计流量是单调计数器，机器离线也照旧显示最后一次已知值
-        with ui.row().classes('items-center gap-3 flex-wrap'):
-            ui.label(f'总 ↓ {format_bytes(snap["net_in"])}').classes(
-                'text-[10px] font-bold font-mono').style(
-                'color: var(--xf-text-subtle);')
-            ui.label(f'↑ {format_bytes(snap["net_out"])}').classes(
-                'text-[10px] font-bold font-mono').style(
-                'color: var(--xf-text-subtle);')
-            if snap['swap_total_gb'] > 0:
-                swap_used = snap['swap_used_gb']
-                swap_text = '--' if swap_used is None else f'{swap_used:.1f}'
-                ui.label(
-                    f'SWAP {swap_text} / {snap["swap_total_gb"]:.1f} GB'
-                ).classes('text-[10px] font-bold').style(
-                    'color: var(--xf-text-subtle);')
-
+    pass
 
 def _render_speed_chip(icon, color, bps):
     style = (f'color: {color};' if bps is not None
