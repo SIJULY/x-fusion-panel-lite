@@ -508,6 +508,7 @@ def _render_server_card(snap: dict):
                             status_icon, border_accent)
         if not snap['monitored']:
             _render_card_unmonitored()
+            _render_card_footer(snap, border_accent)
             return
         _render_card_sysinfo(snap)
         _render_card_metrics(snap)
@@ -573,32 +574,23 @@ def _render_card_header(snap, status_color, status_text,
             name_label.on('click', partial(_open_single_server, snap['url']))
             name_label.tooltip('点击查看单机详情')
             
-        with ui.column().classes('items-end gap-0.5 flex-shrink-0'):
+        with ui.row().classes('items-center gap-1.5 flex-shrink-0'):
             uptime = snap['uptime'] if snap['uptime'] else '--'
             load_1 = f"{snap['load_1']:.1f}" if snap['load_1'] is not None else '--'
             
             uptime_color = '#ef4444' if snap['offline'] else ('#22c55e' if snap['online'] else 'var(--xf-text-subtle)')
             icon_uptime_color = '#ef4444' if snap['offline'] else ('#22c55e' if snap['online'] else 'var(--xf-text-subtle)')
             
-            with ui.row().classes('items-center gap-1.5'):
-                ui.icon('power_settings_new').classes('text-xs').style(f'color: {icon_uptime_color};')
-                ui.label(uptime).classes('text-[11px] font-bold').style(f'color: {uptime_color};')
-                
-                # Load
-                ui.icon('show_chart').classes('text-xs ml-1').style('color: var(--xf-text-subtle);')
-                ui.label(load_1).classes('text-[11px] font-bold').style('color: var(--xf-text-subtle);')
-
-            report_text, report_color, report_tip = _last_report_info(snap)
-            with ui.row().classes('items-center gap-1 whitespace-nowrap'):
-                ui.icon('schedule').classes('text-[11px]').style(f'color: {report_color};')
-                report_label = ui.label(report_text).classes('text-[10px] font-bold leading-none').style(
-                    f'color: {report_color};')
-                if report_tip:
-                    report_label.tooltip(report_tip)
+            ui.icon('power_settings_new').classes('text-xs').style(f'color: {icon_uptime_color};')
+            ui.label(uptime).classes('text-[11px] font-bold').style(f'color: {uptime_color};')
+            
+            # Load
+            ui.icon('show_chart').classes('text-xs ml-1').style('color: var(--xf-text-subtle);')
+            ui.label(load_1).classes('text-[11px] font-bold').style('color: var(--xf-text-subtle);')
 
 
 def _last_report_info(snap: dict) -> tuple[str, str, str]:
-    """卡片头部的「最后上报」文案、颜色和精确时间 tooltip。"""
+    """卡片右下角的「最后上报」文案、颜色和精确时间 tooltip。"""
     last_push = _to_float(snap.get('last_push', 0))
     age_text = str(snap.get('data_age_text') or '').strip()
     if not last_push:
@@ -751,7 +743,14 @@ def _render_circular_progress(pct, color, *, text: str | None = None, min_visibl
 
 
 def _render_card_footer(snap, border_accent):
-    pass
+    report_text, report_color, report_tip = _last_report_info(snap)
+    with ui.row().classes('w-full justify-end items-center px-4 pb-3'):
+        with ui.row().classes('items-center gap-1 whitespace-nowrap'):
+            ui.icon('schedule').classes('text-[11px]').style(f'color: {report_color};')
+            report_label = ui.label(report_text).classes(
+                'text-[10px] font-bold leading-none').style(f'color: {report_color};')
+            if report_tip:
+                report_label.tooltip(report_tip)
 
 def _render_speed_chip(icon, color, bps):
     style = (f'color: {color};' if bps is not None
