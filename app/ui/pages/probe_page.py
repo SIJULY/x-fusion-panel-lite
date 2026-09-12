@@ -88,6 +88,20 @@ def _usage_text(used, total) -> str:
     return f'{used_text} / {total:.1f} GB'
 
 
+def _format_cpu_pct(pct) -> str:
+    """CPU 百分比显示文案。
+
+    agent 侧 CPU 采样只有 1 秒且会 round 到 1 位小数，极低负载时经常被压成
+    0.0。在线机器直接显示 0% 很像数据坏了；低于 1% 统一显示成 <1%，既避免
+    满屏 0%，也不谎报成一个确定的 1%。
+    """
+    if pct is None:
+        return '--'
+    if pct < 1:
+        return '<1%'
+    return f'{pct:.1f}%'
+
+
 # 「离线设备」是虚拟分组，不存在于 custom_groups 里，只在探针页用来快速过滤
 OFFLINE_GROUP_LABEL = '🔴 离线设备'
 UNGROUPED_LABEL = '未分组'
@@ -640,6 +654,8 @@ def _render_card_metrics(snap):
                 _render_circular_progress(
                     snap['cpu_pct'],
                     '#22c55e' if not unknown_cpu and snap['cpu_pct'] < 90 else '#ef4444',
+                    text=_format_cpu_pct(snap['cpu_pct']),
+                    min_visible_pct=1 if not unknown_cpu else 0,
                 )
                 cores = f"{snap['cpu_cores']} C" if snap['cpu_cores'] else '--'
                 ui.label(cores).classes(value_class).style('color: var(--xf-text-strong);')
@@ -691,10 +707,11 @@ def _render_card_metrics(snap):
                     down_color,
                 )
 
-def _render_circular_progress(pct, color):
+def _render_circular_progress(pct, color, *, text: str | None = None, min_visible_pct: float = 0.0):
     unknown = pct is None
-    value_text = '--' if unknown else f'{pct:.0f}%'
-    deg = 0 if unknown else int(pct * 3.6)
+    value_text = text if text is not None else ('--' if unknown else f'{pct:.0f}%')
+    display_pct = 0 if unknown else max(float(pct), min_visible_pct)
+    deg = int(display_pct * 3.6)
     
     bg_color = 'color-mix(in srgb, var(--xf-card-border) 70%, transparent)'
     active_color = 'var(--xf-text-subtle)' if unknown else color
@@ -705,7 +722,7 @@ def _render_circular_progress(pct, color):
         with ui.element('div').classes('absolute flex items-center justify-center rounded-full').style(
             'width: 44px; height: 44px; background: var(--xf-panel-bg);'
         ):
-            ui.label(value_text).classes('text-[13px] font-black').style(f'color: {active_color};')
+            ui.label(value_text).classes('text-[12px] font-black whitespace-nowrap leading-none').style(f'color: {active_color};')
 
 
 def _render_card_footer(snap, border_accent):
