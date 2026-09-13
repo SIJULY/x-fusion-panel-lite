@@ -338,7 +338,7 @@ async def load_probe_page():
                     'color: var(--xf-text-strong);')
             with ui.row().classes('items-center gap-2'):
                 ui.label(
-                    f'推送间隔: {probe_push_interval() // 60} 分钟'
+                    f'最大间隔: {probe_push_interval() // 60} 分钟'
                 ).classes(
                     'text-xs font-bold px-2 py-1 rounded-sm border'
                 ).style(

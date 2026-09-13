@@ -40,7 +40,7 @@ from app.core.state import ADMIN_CONFIG, CURRENT_VIEW_STATE, PROBE_DATA_CACHE, S
 from app.services.cloudflare import CloudflareHandler, invalidate_cf_cache
 from app.services.probe import (
     PUSH_INTERVAL_DEFAULT, build_standalone_probe_install_command, install_probe_on_server,
-    probe_offline_after, probe_push_interval,
+    probe_offline_after, probe_push_interval, probe_push_interval_range,
 )
 from app.storage.repositories import save_admin_config
 from app.ui.common.notifications import safe_copy_to_clipboard, safe_notify
@@ -638,7 +638,7 @@ async def load_probe_settings_page():
 
                 with ui.column().classes(section_cls):
                     ui.label('⏱ 探针推送间隔').classes(title_cls)
-                    ui.label('间隔越长，面板 CPU 越低；代价是指标粒度和掉线告警都会变慢。').classes('text-xs text-slate-500')
+                    ui.label('这里设置的是最大推送间隔；每台 VPS 会在上一档到当前档之间随机错峰上报，降低集体刷新峰值。').classes('text-xs text-slate-500')
                     interval_options = {60: '1 分钟', 300: '5 分钟', 900: '15 分钟', 1800: '30 分钟（推荐）', 3600: '1 小时', 7200: '2 小时', 21600: '6 小时（最省）'}
                     current_interval = probe_push_interval()
                     if current_interval not in interval_options:
@@ -654,7 +654,12 @@ async def load_probe_settings_page():
                             secs = PUSH_INTERVAL_DEFAULT
                         offline = secs * 2 + 60
                         alert = offline + 3 * 120
-                        interval_hint.set_text(f'判定离线需 {offline // 60} 分钟无推送；Telegram 掉线告警最慢约 {alert // 60} 分钟后发出。')
+                        min_secs, max_secs = probe_push_interval_range(secs)
+                        interval_hint.set_text(
+                            f'实际每次随机 {min_secs // 60}-{max_secs // 60} 分钟后上报；'
+                            f'判定离线需 {offline // 60} 分钟无推送；'
+                            f'Telegram 掉线告警最慢约 {alert // 60} 分钟后发出。'
+                        )
 
                     interval_select.on_value_change(lambda _: describe_interval())
                     describe_interval()
@@ -723,8 +728,9 @@ def open_probe_settings_dialog_legacy():
                 with ui.column().classes('w-full'):
                     ui.label('⏱ 探针推送间隔').classes('text-sm font-black text-slate-200' if theme['is_dark'] else 'text-sm font-black text-slate-800')
                     ui.label(
-                        'agent 每隔多久上报一次系统指标。间隔越长，面板 CPU 越低——软路由上'
-                        '尤其明显。**节点数据不受影响**：打开单机详情页时会当场 SSH 直拉最新的。'
+                        '这里设置的是最大上报间隔；agent 每次会收到一个随机下次间隔，'
+                        '让不同 VPS 错峰上报。间隔越长，面板 CPU 越低——软路由上尤其明显。'
+                        '**节点数据不受影响**：打开单机详情页时会当场 SSH 直拉最新的。'
                         '代价是指标（CPU / 内存 / 网速）只有这个粒度，掉线告警也会相应变慢。'
                     ).classes('text-xs text-slate-500 mb-2')
 
@@ -756,12 +762,14 @@ def open_probe_settings_dialog_legacy():
                         except (TypeError, ValueError):
                             secs = PUSH_INTERVAL_DEFAULT
                         offline = secs * 2 + 60
+                        min_secs, max_secs = probe_push_interval_range(secs)
                         # 巡检 120 秒一轮 + 连续 3 轮失败才报警
                         alert = offline + 3 * 120
                         interval_hint.set_text(
+                            f'实际每次随机 {min_secs // 60}-{max_secs // 60} 分钟后上报；'
                             f'判定离线需 {offline // 60} 分钟无推送；'
                             f'Telegram 掉线告警最慢约 {alert // 60} 分钟后发出。'
-                            '改完记得跑一次「一键安装 / 更新所有探针」，或等 agent 下次推送时自动生效。'
+                            '新版 agent 下次推送后自动生效；旧版 agent 需跑一次「一键安装 / 更新所有探针」。'
                         )
 
                     interval_select.on_value_change(lambda _: describe_interval())

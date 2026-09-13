@@ -1,5 +1,6 @@
 import asyncio
 import json
+import random
 import re
 import shlex
 import socket
@@ -55,6 +56,38 @@ def probe_push_interval():
     except (TypeError, ValueError):
         return PUSH_INTERVAL_DEFAULT
     return max(PUSH_INTERVAL_MIN, min(PUSH_INTERVAL_MAX, interval))
+
+
+def probe_push_interval_range(interval=None):
+    """按配置档位计算随机推送区间，返回 (min_seconds, max_seconds)。
+
+    用户选择的是“最大推送间隔”。面板每次响应探针时，在上一档之后到当前
+    档之间随机挑一个下次 sleep，避免所有 VPS 固定同一节奏集体上报。
+
+    例：5 分钟 => 2-5 分钟；15 分钟 => 6-15 分钟；30 分钟 => 16-30 分钟。
+    非预设值按同样思路取当前最大值的一半之后到当前值之间随机。
+    """
+    try:
+        max_seconds = int(interval if interval is not None else probe_push_interval())
+    except (TypeError, ValueError):
+        max_seconds = PUSH_INTERVAL_DEFAULT
+    max_seconds = max(PUSH_INTERVAL_MIN, min(PUSH_INTERVAL_MAX, max_seconds))
+
+    presets = [60, 300, 900, 1800, 3600, 7200, 21600]
+    if max_seconds in presets:
+        idx = presets.index(max_seconds)
+        min_seconds = PUSH_INTERVAL_MIN if idx == 0 else presets[idx - 1] + 60
+    else:
+        min_seconds = max(PUSH_INTERVAL_MIN, max_seconds // 2 + 60)
+    return min(min_seconds, max_seconds), max_seconds
+
+
+def randomized_probe_push_interval():
+    """返回本次下发给 agent 的随机下次推送间隔秒数。"""
+    min_seconds, max_seconds = probe_push_interval_range()
+    if min_seconds >= max_seconds:
+        return max_seconds
+    return random.randint(min_seconds, max_seconds)
 
 
 def probe_offline_after():
@@ -359,10 +392,12 @@ async def probe_push_data(request: Request):
 
             asyncio.create_task(check_and_handle_traffic_limit(target_server, data))
 
-        # 响应体里带上期望的推送间隔，agent 会用它当下次 sleep 的秒数。
+        # 响应体里带上下次推送间隔，agent 会用它当下次 sleep 的秒数。
+        # 这里按配置档位随机下发，避免所有 VPS 固定同一节奏集体上报。
+        # 配置值仍代表“最大间隔”，离线判定也继续按这个最大值派生。
         # 这样改间隔只需要在面板里改个数字，不用再 SSH 重装所有 VPS。
         # 老版本 agent 只判断请求是否成功、不读响应体，多出来的数字会被忽略。
-        return Response(f"OK {probe_push_interval()}", 200)
+        return Response(f"OK {randomized_probe_push_interval()}", 200)
     except Exception:
         return Response("Error", 500)
 
