@@ -4,8 +4,9 @@
 类似于哪吒探针 / ServerStatus 的面板效果。
 
 数据来源是内存中的 PROBE_DATA_CACHE（探针 agent 定期推送）。前端每 30 秒醒
-一次，但只在真实数据或在线/离线状态变了时才重绘。不要为了「N 分钟前」这类
-纯时间文案重建整个卡片网格，否则所有系统图标会同步重新加载，看起来像集体闪烁。
+一次，但只在服务器列表 / 分组 / 在线离线状态这类结构变化时才重绘。不要为了
+指标数值或「N 分钟前」这类高频变化重建整个卡片网格，否则所有系统图标会同步
+重新加载，看起来像集体闪烁。
 
 布局：
   顶部 — 搜索框 + 分组筛选，然后是统计概览（总服务器 / 在线 / 离线 / 未监控）
@@ -154,24 +155,23 @@ def _probe_group_options() -> dict[str, str]:
 def _probe_fingerprint() -> tuple:
     """页面内容的指纹：变了才值得重绘。
 
-    各机器的推送时间戳和在线/离线判定会改变卡片内容，需要触发重绘；但不要把
-    推送年龄文案档位放进指纹，否则没有新数据时也会整页重建，导致远程 OS 图标
-    在所有卡片上同步闪烁。
+    这里故意不放 last_updated / CPU / 网速等探针指标：它们会随每次上报变化，
+    若进入指纹，页面端 30 秒 timer 就会把整个卡片网格统一重建，远程 OS 图标
+    也会统一重新加载，看起来像“所有图标每 30 秒一起闪”。
+
+    因此 timer 只负责列表结构、筛选选项、在线/离线状态这类变化；需要看最新
+    指标时刷新页面或进入单机详情页。
     """
     parts = []
     for server_conf in SERVERS_CACHE:
         if not isinstance(server_conf, dict):
             continue
         url = server_conf.get('url', '')
-        probe = PROBE_DATA_CACHE.get(url)
-        last_push = (_to_float(probe.get('last_updated', 0))
-                     if isinstance(probe, dict) else 0.0)
         parts.append((
             url,
             server_conf.get('name'),
             server_conf.get('group'),
             tuple(server_conf.get('tags') or ()),
-            last_push,
             is_server_monitored(server_conf),
             is_server_offline(server_conf),
         ))
@@ -327,6 +327,12 @@ async def load_probe_page():
                 )
             render_probe_cards.refresh()
 
+        def refresh_by_filter_change():
+            # 搜索/分组筛选是用户主动要求重绘；同时同步结构指纹，避免下一个
+            # 30 秒 tick 拿旧指纹再补一次全量刷新。
+            last_fingerprint['value'] = _probe_fingerprint()
+            render_probe_cards.refresh()
+
         with ui.row().classes(
                 'w-full items-center justify-between mb-4 border-b pb-3'
         ).style('border-color: var(--xf-card-border);'):
@@ -357,14 +363,14 @@ async def load_probe_page():
         with ui.row().classes('w-full items-center gap-3 mb-4 flex-wrap'):
             search_input = ui.input(
                 placeholder='搜索服务器名称或 IP',
-                on_change=lambda _: render_probe_cards.refresh(),
+                on_change=lambda _: refresh_by_filter_change(),
             ).props('dense outlined clearable debounce="300"').classes(
                 'w-[280px] max-w-full')
 
             group_select = ui.select(
                 _probe_group_options(),
                 value='all',
-                on_change=lambda _: render_probe_cards.refresh(),
+                on_change=lambda _: refresh_by_filter_change(),
             ).props('dense outlined').classes('w-[200px] max-w-full')
 
         # 先播种指纹，免得挂上定时器后第一次 tick 就白重绘一遍
