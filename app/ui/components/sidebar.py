@@ -17,7 +17,7 @@ from app.core.state import (
 from app.services.probe import count_unmonitored_servers, get_unmonitored_servers, list_offline_servers, probe_offline_after
 from app.storage.repositories import save_admin_config
 from app.ui.common.dialogs_data import open_data_mgmt_dialog, open_global_settings_dialog
-from app.ui.common.dialogs_settings import open_cloudflare_settings_dialog, open_probe_settings_dialog
+from app.ui.common.dialogs_settings import open_cloudflare_settings_dialog, load_probe_settings_page
 from app.ui.dialogs.batch_ssh import BatchSSH
 from app.ui.dialogs.bulk_edit import open_bulk_edit_dialog
 from app.ui.dialogs.group_dialogs import (
@@ -631,7 +631,7 @@ def render_sidebar_content():
         ui.button('批量 SSH 执行', icon='playlist_play', on_click=batch_ssh_manager.open_dialog).props(
             'flat align=left').classes(theme['bottom_btn']).style(
             'background: var(--xf-elevated-bg); border-color: var(--xf-card-border); color: var(--xf-text-strong);')
-        ui.button('连接与通知设置', icon='tune', on_click=open_probe_settings_dialog).props(
+        ui.button('连接与通知设置', icon='tune', on_click=lambda: asyncio.create_task(load_probe_settings_page())).props(
             'flat align=left').classes(theme['bottom_btn']).style(
             'background: var(--xf-elevated-bg); border-color: var(--xf-card-border); color: var(--xf-text-strong);')
         ui.button('Cloudflare 设置', icon='cloud', on_click=open_cloudflare_settings_dialog).props(

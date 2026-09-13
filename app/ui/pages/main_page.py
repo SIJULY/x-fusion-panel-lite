@@ -636,6 +636,9 @@ def main_page(request: Request):
         elif current_scope == 'PROBE':
             from app.ui.pages.probe_page import load_probe_page
             await load_probe_page()
+        elif current_scope == 'PROBE_SETTINGS':
+            from app.ui.common.dialogs_settings import load_probe_settings_page
+            await load_probe_settings_page()
 
     async def run_security_check():
         if last_ip and last_ip != current_ip:
@@ -744,6 +747,10 @@ def main_page(request: Request):
             logger.debug("[MainPage] restore_last_view branch=PROBE")
             from app.ui.pages.probe_page import load_probe_page
             await load_probe_page()
+        elif last_scope == 'PROBE_SETTINGS':
+            logger.debug("[MainPage] restore_last_view branch=PROBE_SETTINGS")
+            from app.ui.common.dialogs_settings import load_probe_settings_page
+            await load_probe_settings_page()
         elif last_scope == 'DASHBOARD':
             logger.debug("[MainPage] restore_last_view branch=DASHBOARD")
             await load_dashboard_stats()
