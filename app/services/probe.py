@@ -158,30 +158,16 @@ def _extract_install_script_body(script: str) -> str:
 
 
 def build_standalone_probe_install_command():
-    """生成可复制到单台 VPS 本机执行的探针安装命令。"""
-    script_body = _extract_install_script_body(_render_probe_install_script(''))
+    """生成可复制到单台 VPS 本机执行的一行探针安装命令。"""
     manager_url = ADMIN_CONFIG.get('manager_base_url', 'http://xui-manager:8080').rstrip('/')
     token = ADMIN_CONFIG.get('probe_token', 'default_token')
-    eof = 'XFUSION_PROBE_INSTALL_EOF'
-
-    register_payload = json.dumps({'token': token}, ensure_ascii=False)
+    install_url = f'{manager_url}/static/x-install.sh'
     register_url = f'{manager_url}/api/probe/register'
-    register_py = (
-        "import ssl, urllib.request; "
-        f"url={register_url!r}; data={register_payload!r}.encode('utf-8'); "
-        "ctx=ssl.create_default_context(); ctx.check_hostname=False; ctx.verify_mode=ssl.CERT_NONE; "
-        "req=urllib.request.Request(url, data=data, headers={'Content-Type':'application/json'}); "
-        "urllib.request.urlopen(req, timeout=10, context=ctx).read()"
+    return (
+        f"tmp=/tmp/x-fusion-lite-install.sh; "
+        f"curl -fsSL {shlex.quote(install_url)} -o $tmp "
+        f"&& bash $tmp {shlex.quote(token)} {shlex.quote(register_url)} {probe_push_interval()}"
     )
-    register_cmd = f"python3 -c {shlex.quote(register_py)} >/dev/null 2>&1 || true"
-    body = script_body.rstrip()
-    if body.endswith('exit 0'):
-        body = body[:-len('exit 0')].rstrip()
-    body = (
-        body
-        + f"\n\n# 7. 向面板注册当前 VPS（已存在则合并，未存在则自动新增）\n{register_cmd}\n\nexit 0\n"
-    )
-    return f"if [ \"$(id -u)\" -eq 0 ]; then bash -s; else sudo bash -s; fi <<'{eof}'\n{body}{eof}"
 
 
 async def install_probe_on_server(server_conf):

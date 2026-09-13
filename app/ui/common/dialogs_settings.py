@@ -614,10 +614,10 @@ def open_probe_settings_dialog():
                         '执行后 VPS 会安装轻量 agent，并主动连接 / 注册到本面板。'
                     ).classes('text-xs text-slate-500 mb-2')
 
-                    command_preview = ui.textarea(
+                    command_preview = ui.input(
                         value=build_standalone_probe_install_command(),
                         label='单台安装命令',
-                    ).props(theme['input_props'] + ' readonly rows=4').classes('w-full font-mono text-[11px]')
+                    ).props(theme['input_props'] + ' readonly').classes('w-full font-mono text-[11px]')
 
                     async def save_then_copy_single_install():
                         # 和批量安装一样，复制前先保存当前表单。否则用户刚改了主控地址，
