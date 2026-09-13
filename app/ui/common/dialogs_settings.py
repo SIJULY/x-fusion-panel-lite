@@ -37,10 +37,11 @@ from app.core.logging import logger
 from app.core.state import ADMIN_CONFIG, PROBE_DATA_CACHE, SERVERS_CACHE
 from app.services.cloudflare import CloudflareHandler, invalidate_cf_cache
 from app.services.probe import (
-    PUSH_INTERVAL_DEFAULT, install_probe_on_server, probe_offline_after, probe_push_interval,
+    PUSH_INTERVAL_DEFAULT, build_standalone_probe_install_command, install_probe_on_server,
+    probe_offline_after, probe_push_interval,
 )
 from app.storage.repositories import save_admin_config
-from app.ui.common.notifications import safe_notify
+from app.ui.common.notifications import safe_copy_to_clipboard, safe_notify
 from app.utils.formatters import format_push_age
 
 
@@ -605,6 +606,33 @@ def open_probe_settings_dialog():
                     with ui.grid().classes('w-full grid-cols-1 sm:grid-cols-2 gap-3'):
                         tg_token = ui.input('Bot Token', value=ADMIN_CONFIG.get('tg_bot_token', '')).props(theme['input_props'])
                         tg_id = ui.input('Chat ID', value=ADMIN_CONFIG.get('tg_chat_id', '')).props(theme['input_props'])
+
+                with ui.column().classes('w-full'):
+                    ui.label('📋 单台安装探针').classes('text-sm font-black text-slate-200' if theme['is_dark'] else 'text-sm font-black text-slate-800')
+                    ui.label(
+                        '复制下面这条命令，到任意一台 VPS 上用 root 或可 sudo 的用户执行。'
+                        '执行后 VPS 会安装轻量 agent，并主动连接 / 注册到本面板。'
+                    ).classes('text-xs text-slate-500 mb-2')
+
+                    command_preview = ui.textarea(
+                        value=build_standalone_probe_install_command(),
+                        label='单台安装命令',
+                    ).props(theme['input_props'] + ' readonly rows=4').classes('w-full font-mono text-[11px]')
+
+                    async def save_then_copy_single_install():
+                        # 和批量安装一样，复制前先保存当前表单。否则用户刚改了主控地址，
+                        # 复制出去的命令仍会烧进旧地址，VPS 执行后连不上当前面板。
+                        await save_settings(close_dialog=False, quiet=True)
+                        cmd = build_standalone_probe_install_command()
+                        command_preview.set_value(cmd)
+                        await safe_copy_to_clipboard(cmd)
+
+                    ui.button('复制单台安装命令', icon='content_copy', on_click=save_then_copy_single_install).props(
+                        'flat').classes(theme['save'] + ' w-full')
+                    ui.label(
+                        '提示：主控端外部地址必须是这台 VPS 能访问到的公网 IP / 域名 / 隧道地址；'
+                        '如果面板里还没有这台 VPS，会自动加入“自动注册”分组。'
+                    ).classes('text-[11px] text-slate-500 mt-1')
 
                 with ui.column().classes('w-full'):
                     ui.label('🔄 批量更新探针').classes('text-sm font-black text-slate-200' if theme['is_dark'] else 'text-sm font-black text-slate-800')

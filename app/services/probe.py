@@ -117,6 +117,73 @@ def count_unmonitored_servers(servers=None):
     return len(get_unmonitored_servers(servers))
 
 
+def _render_probe_install_script(server_url: str = ''):
+    """把探针安装模板替换成可执行脚本。
+
+    server_url 为空时，agent 会在 VPS 本机自行探测公网 IP 并上报；这正适合
+    「复制一条命令到任意 VPS 上执行」的单台安装场景。
+    """
+    my_token = ADMIN_CONFIG.get('probe_token', 'default_token')
+    manager_url = ADMIN_CONFIG.get('manager_base_url', 'http://xui-manager:8080').rstrip('/')
+
+    return PROBE_INSTALL_SCRIPT \
+        .replace("__MANAGER_URL__", manager_url) \
+        .replace("__TOKEN__", my_token) \
+        .replace("__SERVER_URL__", server_url) \
+        .replace("__PUSH_INTERVAL__", str(probe_push_interval())) \
+        .replace("__AGENT_SCRIPT__", PROBE_AGENT_SCRIPT) \
+        .replace("__AGENT_NAME__", PROBE_AGENT_NAME) \
+        .replace("__LEGACY_AGENT_SCRIPT__", PROBE_LEGACY_AGENT_SCRIPT) \
+        .replace("__LEGACY_AGENT_NAME__", PROBE_LEGACY_AGENT_NAME)
+
+
+def _extract_install_script_body(script: str) -> str:
+    """把配置中的 `bash -c '...'` 模板提取成可通过 stdin 传给 bash 的纯脚本。
+
+    后台 SSH 推送和手动复制命令都用 `bash -s`/`sudo bash -s` 执行 stdin 脚本，
+    因此需要移除模板里为直接执行准备的自提权行，避免 `$0` 在 stdin / bash -c
+    场景下被解析成 bash 二进制或普通字符串后执行失败。
+    """
+    body = script.strip()
+    if body.startswith("bash -c '") and body.endswith("'"):
+        body = body[len("bash -c '"):-1]
+    body = body.lstrip('\n')
+    body = re.sub(
+        r'(?m)^# 1\. 提升权限\n\[ "\$\(id -u\)" -eq 0 \].*?exit 1; \}\n\n?',
+        '',
+        body,
+        count=1,
+    )
+    return body.strip() + '\n'
+
+
+def build_standalone_probe_install_command():
+    """生成可复制到单台 VPS 本机执行的探针安装命令。"""
+    script_body = _extract_install_script_body(_render_probe_install_script(''))
+    manager_url = ADMIN_CONFIG.get('manager_base_url', 'http://xui-manager:8080').rstrip('/')
+    token = ADMIN_CONFIG.get('probe_token', 'default_token')
+    eof = 'XFUSION_PROBE_INSTALL_EOF'
+
+    register_payload = json.dumps({'token': token}, ensure_ascii=False)
+    register_url = f'{manager_url}/api/probe/register'
+    register_py = (
+        "import ssl, urllib.request; "
+        f"url={register_url!r}; data={register_payload!r}.encode('utf-8'); "
+        "ctx=ssl.create_default_context(); ctx.check_hostname=False; ctx.verify_mode=ssl.CERT_NONE; "
+        "req=urllib.request.Request(url, data=data, headers={'Content-Type':'application/json'}); "
+        "urllib.request.urlopen(req, timeout=10, context=ctx).read()"
+    )
+    register_cmd = f"python3 -c {shlex.quote(register_py)} >/dev/null 2>&1 || true"
+    body = script_body.rstrip()
+    if body.endswith('exit 0'):
+        body = body[:-len('exit 0')].rstrip()
+    body = (
+        body
+        + f"\n\n# 7. 向面板注册当前 VPS（已存在则合并，未存在则自动新增）\n{register_cmd}\n\nexit 0\n"
+    )
+    return f"if [ \"$(id -u)\" -eq 0 ]; then bash -s; else sudo bash -s; fi <<'{eof}'\n{body}{eof}"
+
+
 async def install_probe_on_server(server_conf):
     name = server_conf.get('name', 'Unknown')
     auth_type = server_conf.get('ssh_auth_type', '全局密钥')
@@ -127,19 +194,7 @@ async def install_probe_on_server(server_conf):
         logger.warning(f"⚠️ [Push Agent] {name} 跳过安装：认证方式为独立密钥，但未保存 SSH 私钥")
         return False
 
-    my_token = ADMIN_CONFIG.get('probe_token', 'default_token')
-
-    manager_url = ADMIN_CONFIG.get('manager_base_url', 'http://xui-manager:8080')
-
-    real_script = PROBE_INSTALL_SCRIPT \
-        .replace("__MANAGER_URL__", manager_url) \
-        .replace("__TOKEN__", my_token) \
-        .replace("__SERVER_URL__", server_conf['url']) \
-        .replace("__PUSH_INTERVAL__", str(probe_push_interval())) \
-        .replace("__AGENT_SCRIPT__", PROBE_AGENT_SCRIPT) \
-        .replace("__AGENT_NAME__", PROBE_AGENT_NAME) \
-        .replace("__LEGACY_AGENT_SCRIPT__", PROBE_LEGACY_AGENT_SCRIPT) \
-        .replace("__LEGACY_AGENT_NAME__", PROBE_LEGACY_AGENT_NAME)
+    real_script = _render_probe_install_script(server_conf['url'])
 
     def _sudo_wrap_command(command: str) -> str:
         """后台 SSH 推送安装时使用的非交互式提权包装。
@@ -157,27 +212,6 @@ async def install_probe_on_server(server_conf):
             return f"printf '%s\\n' {sudo_password} | sudo -S -p '' {command}"
 
         return f"sudo -n {command}"
-
-    def _extract_install_script_body(script: str) -> str:
-        """把配置中的 `bash -c '...'` 模板提取成可通过 stdin 传给 bash 的纯脚本。
-
-        之前直接把整段 `bash -c '...'` 拼到 sudo 后面执行时，模板内部的
-        `exec sudo bash "$0" "$@"` 在 `bash -c` 场景下会把 `$0` 解析成 bash
-        二进制路径，最终导致远端报：`/usr/bin/bash: cannot execute binary file`。
-        后台 SSH 推送本身已经负责 sudo 提权，因此这里移除模板内自提权行，
-        并统一用 `sudo bash -s` 执行 stdin 脚本。
-        """
-        body = script.strip()
-        if body.startswith("bash -c '") and body.endswith("'"):
-            body = body[len("bash -c '"):-1]
-        body = body.lstrip('\n')
-        body = re.sub(
-            r'(?m)^# 1\. 提升权限\n\[ "\$\(id -u\)" -eq 0 \].*?exit 1; \}\n\n?',
-            '',
-            body,
-            count=1,
-        )
-        return body.strip() + '\n'
 
     def _build_install_command(script: str) -> str:
         body = _extract_install_script_body(script)
