@@ -556,7 +556,7 @@ async def load_probe_settings_page():
         'bg-[#070b14] border-[#1e3a5f]/55 shadow-[0_18px_48px_rgba(0,0,0,0.45)]'
         if is_dark else 'bg-white border-slate-300/90 shadow-[0_10px_28px_rgba(148,163,184,0.16)]'
     )
-    section_base = 'w-full p-4 rounded-sm border gap-2'
+    section_base = 'w-full h-full p-4 rounded-sm border gap-2'
     section_cls = section_base + (' bg-[#050b14] border-[#1e3a5f]/55' if is_dark else ' bg-white border-slate-200')
     accent_cls = section_base + (' bg-cyan-950/15 border-cyan-500/25' if is_dark else ' bg-sky-50 border-sky-200')
     title_cls = 'text-sm font-black text-slate-200' if is_dark else 'text-sm font-black text-slate-800'
@@ -577,88 +577,86 @@ async def load_probe_settings_page():
                         ui.label('主控地址、推送间隔、Telegram 告警与探针安装维护集中在这一页。').classes(theme['sub'])
                 ui.button('返回仪表盘', icon='dashboard', on_click=lambda: asyncio.create_task(_back_to_dashboard())).props('flat').classes(theme['outline_btn'])
 
-            with ui.grid().classes('w-full grid-cols-1 xl:grid-cols-2 gap-4 p-4'):
-                with ui.column().classes('w-full gap-4'):
-                    with ui.column().classes(accent_cls):
-                        ui.label('📡 主控端外部地址').classes('text-sm font-black ' + ('text-cyan-300' if is_dark else 'text-sky-700'))
-                        ui.label('Agent 会向这个地址注册和推送数据，请填写 VPS 能访问到的公网 IP / 域名 / 隧道地址。').classes('text-xs text-slate-500')
-                        url_input = ui.input(value=ADMIN_CONFIG.get('manager_base_url', 'http://xui-manager:8080'), placeholder='http://1.2.3.4:8080').classes('w-full').props(theme['input_props'])
+            with ui.grid().classes('w-full grid-cols-1 xl:grid-cols-2 gap-4 p-4 items-stretch'):
+                with ui.column().classes(accent_cls):
+                    ui.label('📡 主控端外部地址').classes('text-sm font-black ' + ('text-cyan-300' if is_dark else 'text-sky-700'))
+                    ui.label('Agent 会向这个地址注册和推送数据，请填写 VPS 能访问到的公网 IP / 域名 / 隧道地址。').classes('text-xs text-slate-500')
+                    url_input = ui.input(value=ADMIN_CONFIG.get('manager_base_url', 'http://xui-manager:8080'), placeholder='http://1.2.3.4:8080').classes('w-full').props(theme['input_props'])
 
-                    with ui.column().classes(section_cls):
-                        ui.label('⏱ 探针推送间隔').classes(title_cls)
-                        ui.label('间隔越长，面板 CPU 越低；代价是指标粒度和掉线告警都会变慢。').classes('text-xs text-slate-500')
-                        interval_options = {60: '1 分钟', 300: '5 分钟', 900: '15 分钟', 1800: '30 分钟（推荐）', 3600: '1 小时', 7200: '2 小时', 21600: '6 小时（最省）'}
-                        current_interval = probe_push_interval()
-                        if current_interval not in interval_options:
-                            interval_options[current_interval] = f'{current_interval} 秒（当前值）'
-                            interval_options = dict(sorted(interval_options.items()))
-                        interval_select = ui.select(interval_options, value=current_interval, label='推送间隔').props(theme['input_props'] + ' options-dense').classes('w-full')
-                        interval_hint = ui.label('').classes('text-[11px] text-slate-500')
+                with ui.column().classes(section_cls):
+                    ui.label('📋 单台安装探针').classes(title_cls)
+                    ui.label('复制这条单行命令，到任意一台 VPS 上用 root 或可 sudo 的用户执行。').classes('text-xs text-slate-500')
+                    command_preview = ui.input(value=build_standalone_probe_install_command(), label='单台安装命令').props(theme['input_props'] + ' readonly autogrow=false').classes('w-full font-mono text-[11px]')
 
-                        def describe_interval():
-                            try:
-                                secs = int(interval_select.value or PUSH_INTERVAL_DEFAULT)
-                            except (TypeError, ValueError):
-                                secs = PUSH_INTERVAL_DEFAULT
-                            offline = secs * 2 + 60
-                            alert = offline + 3 * 120
-                            interval_hint.set_text(f'判定离线需 {offline // 60} 分钟无推送；Telegram 掉线告警最慢约 {alert // 60} 分钟后发出。')
+                    async def save_settings(*, quiet=False):
+                        url_val = url_input.value.strip().rstrip('/')
+                        if url_val:
+                            ADMIN_CONFIG['manager_base_url'] = url_val
+                        ADMIN_CONFIG['tg_bot_token'] = tg_token.value.strip()
+                        ADMIN_CONFIG['tg_chat_id'] = tg_id.value.strip()
+                        try:
+                            ADMIN_CONFIG['probe_push_interval'] = int(interval_select.value or PUSH_INTERVAL_DEFAULT)
+                        except (TypeError, ValueError):
+                            ADMIN_CONFIG['probe_push_interval'] = PUSH_INTERVAL_DEFAULT
+                        await save_admin_config()
+                        command_preview.set_value(build_standalone_probe_install_command())
+                        if not quiet:
+                            safe_notify('✅ 设置已保存（改了主控端外部地址的话，记得更新探针）', 'positive')
 
-                        interval_select.on_value_change(lambda _: describe_interval())
-                        describe_interval()
+                    async def save_then_copy_single_install():
+                        await save_settings(quiet=True)
+                        cmd = build_standalone_probe_install_command()
+                        command_preview.set_value(cmd)
+                        await safe_copy_to_clipboard(cmd)
 
-                    with ui.column().classes(section_cls):
-                        ui.label('🤖 Telegram 通知').classes(title_cls)
-                        ui.label('服务器掉线 / 恢复报警。巡检每 120 秒一轮，连续 3 轮失败才报警；只巡检已装探针的机器。').classes('text-xs text-slate-500')
-                        with ui.grid().classes('w-full grid-cols-1 md:grid-cols-2 gap-3'):
-                            tg_token = ui.input('Bot Token', value=ADMIN_CONFIG.get('tg_bot_token', '')).props(theme['input_props'])
-                            tg_id = ui.input('Chat ID', value=ADMIN_CONFIG.get('tg_chat_id', '')).props(theme['input_props'])
+                    ui.button('复制单台安装命令', icon='content_copy', on_click=save_then_copy_single_install).props('flat').classes(theme['save'] + ' w-full')
+                    ui.label('如果面板里还没有这台 VPS，会自动加入“自动注册”分组。').classes('text-[11px] text-slate-500')
 
-                with ui.column().classes('w-full gap-4'):
-                    with ui.column().classes(section_cls):
-                        ui.label('📋 单台安装探针').classes(title_cls)
-                        ui.label('复制这条单行命令，到任意一台 VPS 上用 root 或可 sudo 的用户执行。').classes('text-xs text-slate-500')
-                        command_preview = ui.input(value=build_standalone_probe_install_command(), label='单台安装命令').props(theme['input_props'] + ' readonly autogrow=false').classes('w-full font-mono text-[11px]')
+                with ui.column().classes(section_cls):
+                    ui.label('⏱ 探针推送间隔').classes(title_cls)
+                    ui.label('间隔越长，面板 CPU 越低；代价是指标粒度和掉线告警都会变慢。').classes('text-xs text-slate-500')
+                    interval_options = {60: '1 分钟', 300: '5 分钟', 900: '15 分钟', 1800: '30 分钟（推荐）', 3600: '1 小时', 7200: '2 小时', 21600: '6 小时（最省）'}
+                    current_interval = probe_push_interval()
+                    if current_interval not in interval_options:
+                        interval_options[current_interval] = f'{current_interval} 秒（当前值）'
+                        interval_options = dict(sorted(interval_options.items()))
+                    interval_select = ui.select(interval_options, value=current_interval, label='推送间隔').props(theme['input_props'] + ' options-dense').classes('w-full')
+                    interval_hint = ui.label('').classes('text-[11px] text-slate-500')
 
-                        async def save_settings(*, quiet=False):
-                            url_val = url_input.value.strip().rstrip('/')
-                            if url_val:
-                                ADMIN_CONFIG['manager_base_url'] = url_val
-                            ADMIN_CONFIG['tg_bot_token'] = tg_token.value.strip()
-                            ADMIN_CONFIG['tg_chat_id'] = tg_id.value.strip()
-                            try:
-                                ADMIN_CONFIG['probe_push_interval'] = int(interval_select.value or PUSH_INTERVAL_DEFAULT)
-                            except (TypeError, ValueError):
-                                ADMIN_CONFIG['probe_push_interval'] = PUSH_INTERVAL_DEFAULT
-                            await save_admin_config()
-                            command_preview.set_value(build_standalone_probe_install_command())
-                            if not quiet:
-                                safe_notify('✅ 设置已保存（改了主控端外部地址的话，记得更新探针）', 'positive')
+                    def describe_interval():
+                        try:
+                            secs = int(interval_select.value or PUSH_INTERVAL_DEFAULT)
+                        except (TypeError, ValueError):
+                            secs = PUSH_INTERVAL_DEFAULT
+                        offline = secs * 2 + 60
+                        alert = offline + 3 * 120
+                        interval_hint.set_text(f'判定离线需 {offline // 60} 分钟无推送；Telegram 掉线告警最慢约 {alert // 60} 分钟后发出。')
 
-                        async def save_then_copy_single_install():
-                            await save_settings(quiet=True)
-                            cmd = build_standalone_probe_install_command()
-                            command_preview.set_value(cmd)
-                            await safe_copy_to_clipboard(cmd)
+                    interval_select.on_value_change(lambda _: describe_interval())
+                    describe_interval()
 
-                        ui.button('复制单台安装命令', icon='content_copy', on_click=save_then_copy_single_install).props('flat').classes(theme['save'] + ' w-full')
-                        ui.label('如果面板里还没有这台 VPS，会自动加入“自动注册”分组。').classes('text-[11px] text-slate-500')
+                with ui.column().classes(section_cls):
+                    ui.label('🔄 批量更新探针').classes(title_cls)
+                    ui.label('给所有服务器一次性安装 / 更新 agent；导入备份或修改主控地址后建议运行一次。').classes('text-xs text-slate-500')
 
-                    with ui.column().classes(section_cls):
-                        ui.label('🔄 批量更新探针').classes(title_cls)
-                        ui.label('给所有服务器一次性安装 / 更新 agent；导入备份或修改主控地址后建议运行一次。').classes('text-xs text-slate-500')
+                    async def save_then_batch():
+                        await save_settings(quiet=True)
+                        open_batch_probe_dialog()
 
-                        async def save_then_batch():
-                            await save_settings(quiet=True)
-                            open_batch_probe_dialog()
+                    ui.button('一键安装 / 更新所有探针', icon='sync', on_click=save_then_batch).props('flat').classes(theme['save'] + ' w-full')
+                    ui.label(f'当前共 {len(SERVERS_CACHE)} 台服务器。只覆盖本面板自己的 agent，不影响 xray / x-ui 等代理服务。').classes('text-[11px] text-slate-500')
 
-                        ui.button('一键安装 / 更新所有探针', icon='sync', on_click=save_then_batch).props('flat').classes(theme['save'] + ' w-full')
-                        ui.label(f'当前共 {len(SERVERS_CACHE)} 台服务器。只覆盖本面板自己的 agent，不影响 xray / x-ui 等代理服务。').classes('text-[11px] text-slate-500')
+                with ui.column().classes(section_cls):
+                    ui.label('🤖 Telegram 通知').classes(title_cls)
+                    ui.label('服务器掉线 / 恢复报警。巡检每 120 秒一轮，连续 3 轮失败才报警；只巡检已装探针的机器。').classes('text-xs text-slate-500')
+                    with ui.grid().classes('w-full grid-cols-1 md:grid-cols-2 gap-3'):
+                        tg_token = ui.input('Bot Token', value=ADMIN_CONFIG.get('tg_bot_token', '')).props(theme['input_props'])
+                        tg_id = ui.input('Chat ID', value=ADMIN_CONFIG.get('tg_chat_id', '')).props(theme['input_props'])
 
-                    with ui.column().classes(section_cls):
-                        ui.label('🗑️ 批量卸载探针').classes('text-sm font-black ' + ('text-rose-400' if is_dark else 'text-rose-600'))
-                        ui.label('一键强制卸载所有已连接服务器上的探针脚本（包含完整版及轻量版），不会影响节点代理。').classes('text-xs text-slate-500')
-                        ui.button('一键卸载所有探针', icon='delete', on_click=open_batch_uninstall_probe_dialog).props('flat').classes(danger_btn + ' w-full')
+                with ui.column().classes(section_cls):
+                    ui.label('🗑️ 批量卸载探针').classes('text-sm font-black ' + ('text-rose-400' if is_dark else 'text-rose-600'))
+                    ui.label('一键强制卸载所有已连接服务器上的探针脚本（包含完整版及轻量版），不会影响节点代理。').classes('text-xs text-slate-500')
+                    ui.button('一键卸载所有探针', icon='delete', on_click=open_batch_uninstall_probe_dialog).props('flat').classes(danger_btn + ' w-full')
 
             with ui.row().classes(theme['footer_full']):
                 ui.button('保存设置', icon='save', on_click=lambda: asyncio.create_task(save_settings())).props('flat').classes(theme['save_full'])
