@@ -528,26 +528,26 @@ def _render_card_header(snap, status_color, status_text,
     ).style(f'border-color: {border_accent};'):
         with ui.row().classes('items-center gap-2 overflow-hidden'):
             os_name = snap['os'].lower() if snap['os'] else ''
-            # Using custom icon mapping since mdi icons like 'ubuntu' might not exist directly without the 'mdi-' prefix, 
-            # and to align with the provided screenshot styling where OS icons are missing.
-            os_icon = 'img:https://upload.wikimedia.org/wikipedia/commons/a/ab/Logo-ubuntu_cof-orange-hex.svg' if 'ubuntu' in os_name else 'img:https://upload.wikimedia.org/wikipedia/commons/6/66/Openlogo-debianV2.svg' if 'debian' in os_name else 'img:https://upload.wikimedia.org/wikipedia/commons/9/9e/CentOS_Icon.svg' if 'centos' in os_name else 'img:https://upload.wikimedia.org/wikipedia/commons/5/5f/Windows_logo_-_2012.svg' if 'windows' in os_name else 'img:https://upload.wikimedia.org/wikipedia/commons/3/35/Tux.svg' if 'linux' in os_name else 'dns'
-            
-            # If offline, grey out the icon
-            icon_color = 'var(--xf-text-subtle)' if snap['offline'] else (
-                '#E95420' if 'ubuntu' in os_name else '#D70A53' if 'debian' in os_name else '#262577' if 'centos' in os_name else '#0078D6' if 'windows' in os_name else 'var(--xf-accent)'
-            )
-            
+
+            # 不用外链 SVG 图片做系统图标：探针数据同步上报时卡片需要重绘，img
+            # 节点重建会触发浏览器重新加载/解码，表现为所有 Ubuntu/Debian 图标
+            # 每 30 秒同步闪一下。纯 CSS/文字徽标没有网络加载，重绘也不会闪。
+            os_mark = 'U' if 'ubuntu' in os_name else 'D' if 'debian' in os_name else 'C' if 'centos' in os_name else 'W' if 'windows' in os_name else 'L' if 'linux' in os_name else ''
+            icon_color = 'var(--xf-text-subtle)' if snap['offline'] else '#E95420' if 'ubuntu' in os_name else '#D70A53' if 'debian' in os_name else '#262577' if 'centos' in os_name else '#0078D6' if 'windows' in os_name else 'var(--xf-accent)'
+
             if not snap['monitored'] or snap['offline']:
                 ui.icon('dns').classes('text-base flex-shrink-0').style(f'color: {icon_color};')
+            elif os_mark:
+                ui.label(os_mark).classes(
+                    'w-4 h-4 flex-shrink-0 rounded-[3px] text-[10px] font-black leading-none '
+                    'flex items-center justify-center select-none'
+                ).style(
+                    f'color: white; background: {icon_color}; '
+                    'width: 16px; height: 16px; min-width: 16px; min-height: 16px; '
+                    'line-height: 16px;'
+                )
             else:
-                if os_icon.startswith('img:'):
-                    ui.image(os_icon[4:]).classes(
-                        'w-4 h-4 flex-shrink-0 object-contain'
-                    ).props('loading=lazy decoding=async').style(
-                        'width: 16px; height: 16px; min-width: 16px; min-height: 16px;'
-                    )
-                else:
-                    ui.icon(os_icon).classes('text-base flex-shrink-0').style(f'color: {icon_color};')
+                ui.icon('dns').classes('text-base flex-shrink-0').style(f'color: {icon_color};')
             
             # default leaf emoji as in screenshot
             ui.label('🍃').classes('text-sm flex-shrink-0').style('margin-right: -4px;')
