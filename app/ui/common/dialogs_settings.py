@@ -9,6 +9,8 @@ from urllib.parse import urlparse
 
 from nicegui import app, run, ui
 
+from app.api.notifications import send_telegram_message
+
 
 def _settings_theme():
     is_dark = bool(app.storage.user.get('is_dark', True))
@@ -97,6 +99,28 @@ def _manager_url_warning(url):
     if ip.is_private:
         return f'主控地址是内网地址（{host}）。只有当这些机器和面板处在同一内网时才能通，否则要换成公网 IP / 域名 / 隧道地址'
     return None
+
+
+async def _send_telegram_test_from_fields(tg_token, tg_id):
+    """用当前表单里的 Token / Chat ID 发送测试消息，并在成功后顺手保存。"""
+    token = str(tg_token.value or '').strip()
+    chat_id = str(tg_id.value or '').strip()
+    if not token or not chat_id:
+        safe_notify('请先填写 Telegram Bot Token 和 Chat ID', 'warning')
+        return
+
+    ok, detail = await send_telegram_message(
+        '✅ X-Fusion Telegram 测试消息发送成功。\n如果你能看到这条消息，掉线/恢复告警通道已打通。',
+        token=token,
+        chat_id=chat_id,
+    )
+    if ok:
+        ADMIN_CONFIG['tg_bot_token'] = token
+        ADMIN_CONFIG['tg_chat_id'] = chat_id
+        await save_admin_config()
+        safe_notify('✅ Telegram 测试消息已发送，并已保存当前 Token / Chat ID', 'positive')
+    else:
+        safe_notify(f'❌ Telegram 测试发送失败：{detail}', 'negative', timeout=7000)
 
 
 def _probe_push_age(server_conf):
@@ -652,6 +676,11 @@ async def load_probe_settings_page():
                     with ui.grid().classes('w-full grid-cols-1 md:grid-cols-2 gap-3'):
                         tg_token = ui.input('Bot Token', value=ADMIN_CONFIG.get('tg_bot_token', '')).props(theme['input_props'])
                         tg_id = ui.input('Chat ID', value=ADMIN_CONFIG.get('tg_chat_id', '')).props(theme['input_props'])
+                    ui.button(
+                        '测试发送',
+                        icon='send',
+                        on_click=lambda: asyncio.create_task(_send_telegram_test_from_fields(tg_token, tg_id)),
+                    ).props('flat').classes(theme['save'] + ' w-full')
 
                 with ui.column().classes(section_cls):
                     ui.label('🗑️ 批量卸载探针').classes('text-sm font-black ' + ('text-rose-400' if is_dark else 'text-rose-600'))
@@ -749,6 +778,11 @@ def open_probe_settings_dialog_legacy():
                     with ui.grid().classes('w-full grid-cols-1 sm:grid-cols-2 gap-3'):
                         tg_token = ui.input('Bot Token', value=ADMIN_CONFIG.get('tg_bot_token', '')).props(theme['input_props'])
                         tg_id = ui.input('Chat ID', value=ADMIN_CONFIG.get('tg_chat_id', '')).props(theme['input_props'])
+                    ui.button(
+                        '测试发送',
+                        icon='send',
+                        on_click=lambda: asyncio.create_task(_send_telegram_test_from_fields(tg_token, tg_id)),
+                    ).props('flat').classes(theme['save'] + ' w-full')
 
                 with ui.column().classes('w-full'):
                     ui.label('📋 单台安装探针').classes('text-sm font-black text-slate-200' if theme['is_dark'] else 'text-sm font-black text-slate-800')

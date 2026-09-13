@@ -18,7 +18,7 @@ async def startup_sequence():
 
     async def init_alert_cache():
         await asyncio.sleep(5)
-        if ADMIN_CONFIG.get('tg_bot_token'):
+        if ADMIN_CONFIG.get('tg_bot_token') and ADMIN_CONFIG.get('tg_chat_id'):
             logger.info('🛡️ 正在初始化监控状态缓存...')
             await job_monitor_status()
 

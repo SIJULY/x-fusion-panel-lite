@@ -3,10 +3,9 @@
 展示所有受监控服务器的实时状态概览——CPU、负载、内存、磁盘、网络速率等，
 类似于哪吒探针 / ServerStatus 的面板效果。
 
-数据来源是内存中的 PROBE_DATA_CACHE（探针 agent 定期推送），刷新间隔跟随
-探针推送间隔（半分钟 ~ 半小时级）。前端每 30 秒醒一次，但只在内容真的变了
-（有新推送、有机器跨过离线阈值、或推送年龄的显示档位变了）时才重绘——
-推送间隔可能长达半小时，无条件重建整个卡片网格纯属白烧，还会打断鼠标 hover。
+数据来源是内存中的 PROBE_DATA_CACHE（探针 agent 定期推送）。前端每 30 秒醒
+一次，但只在真实数据或在线/离线状态变了时才重绘。不要为了「N 分钟前」这类
+纯时间文案重建整个卡片网格，否则所有系统图标会同步重新加载，看起来像集体闪烁。
 
 布局：
   顶部 — 搜索框 + 分组筛选，然后是统计概览（总服务器 / 在线 / 离线 / 未监控）
@@ -152,29 +151,13 @@ def _probe_group_options() -> dict[str, str]:
     return options
 
 
-def _age_bucket(push_age):
-    """推送年龄的显示档位，跟 format_push_age 的粒度对齐。
-
-    format_push_age 在 90 秒内按秒、90 秒 ~ 90 分钟按分钟、再往上按 0.1 小时
-    显示，所以只有跨过对应档位时文案才会变，没跨就不必重绘。
-    """
-    if push_age is None:
-        return None
-    if push_age < 90:
-        return int(push_age // 30)
-    if push_age < 5400:
-        return int(push_age // 60)
-    return int(push_age // 360)
-
-
 def _probe_fingerprint() -> tuple:
     """页面内容的指纹：变了才值得重绘。
 
-    除了各机器的推送时间戳，还必须带上「在线/离线」判定和推送年龄档位——这两个
-    都随时间变化而与新数据无关，不带的话 agent 挂掉后卡片会永远停在 ONLINE，
-    「N 分钟前」也不再走字。
+    各机器的推送时间戳和在线/离线判定会改变卡片内容，需要触发重绘；但不要把
+    推送年龄文案档位放进指纹，否则没有新数据时也会整页重建，导致远程 OS 图标
+    在所有卡片上同步闪烁。
     """
-    now = time.time()
     parts = []
     for server_conf in SERVERS_CACHE:
         if not isinstance(server_conf, dict):
@@ -189,7 +172,6 @@ def _probe_fingerprint() -> tuple:
             server_conf.get('group'),
             tuple(server_conf.get('tags') or ()),
             last_push,
-            _age_bucket(max(0.0, now - last_push) if last_push else None),
             is_server_monitored(server_conf),
             is_server_offline(server_conf),
         ))
@@ -224,6 +206,7 @@ def _build_server_snapshot(server_conf: dict) -> dict:
     last_push = _to_float(probe.get('last_updated', 0))
     push_age = max(0.0, now - last_push) if last_push else None
     unknown = offline or not probe
+    last_uptime = str(probe.get('uptime') or '').strip() or None
 
     cpu_pct = None if unknown else _clamp(probe.get('cpu_usage', 0.0))
     cpu_cores = int(_to_float(probe.get('cpu_cores')
@@ -282,7 +265,9 @@ def _build_server_snapshot(server_conf: dict) -> dict:
         'net_out': net_out,
         'speed_in': speed_in,
         'speed_out': speed_out,
-        'uptime': None if unknown else (str(probe.get('uptime') or '').strip() or None),
+        # uptime 是最后一次探针上报时的系统运行时长。机器离线后没有新值，继续
+        # 展示这条最后已知值，避免被 unknown 分支抹成 0/--，看起来像 VPS 重启。
+        'uptime': last_uptime,
         'os': str(static.get('os') or '').strip(),
         'arch': str(static.get('arch') or '').strip(),
         'virt': virt,
@@ -556,7 +541,11 @@ def _render_card_header(snap, status_color, status_text,
                 ui.icon('dns').classes('text-base flex-shrink-0').style(f'color: {icon_color};')
             else:
                 if os_icon.startswith('img:'):
-                    ui.image(os_icon[4:]).classes('w-4 h-4 flex-shrink-0')
+                    ui.image(os_icon[4:]).classes(
+                        'w-4 h-4 flex-shrink-0 object-contain'
+                    ).props('loading=lazy decoding=async').style(
+                        'width: 16px; height: 16px; min-width: 16px; min-height: 16px;'
+                    )
                 else:
                     ui.icon(os_icon).classes('text-base flex-shrink-0').style(f'color: {icon_color};')
             

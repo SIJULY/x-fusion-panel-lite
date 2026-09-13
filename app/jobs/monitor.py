@@ -27,7 +27,7 @@ async def job_monitor_status():
             name = srv.get('name', 'Unknown')
             url = srv['url']
 
-            if not ADMIN_CONFIG.get('tg_bot_token'):
+            if not ADMIN_CONFIG.get('tg_bot_token') or not ADMIN_CONFIG.get('tg_chat_id'):
                 return
 
             display_ip = url.split('://')[-1].split(':')[0]
@@ -43,8 +43,11 @@ async def job_monitor_status():
                         f"🕒 **时间**: `{current_time}`"
                     )
                     logger.info(f"🔔 [恢复] {name} 已上线")
-                    asyncio.create_task(send_telegram_message(msg))
-                    ALERT_CACHE[url] = 'online'
+                    ok, detail = await send_telegram_message(msg)
+                    if ok:
+                        ALERT_CACHE[url] = 'online'
+                    else:
+                        logger.error(f"❌ [恢复通知] {name} Telegram 发送失败: {detail}")
             else:
                 current_count = FAILURE_COUNTS.get(url, 0) + 1
                 FAILURE_COUNTS[url] = current_count
@@ -57,8 +60,11 @@ async def job_monitor_status():
                         f"⚠️ **提示**: 连续监测，无法连接"
                     )
                     logger.warning(f"🔔 [报警] {name} 确认离线 (重试{current_count}次)")
-                    asyncio.create_task(send_telegram_message(msg))
-                    ALERT_CACHE[url] = 'offline'
+                    ok, detail = await send_telegram_message(msg)
+                    if ok:
+                        ALERT_CACHE[url] = 'offline'
+                    else:
+                        logger.error(f"❌ [离线通知] {name} Telegram 发送失败: {detail}")
 
     tasks = [_check_single_server(s) for s in SERVERS_CACHE]
     await asyncio.gather(*tasks)
