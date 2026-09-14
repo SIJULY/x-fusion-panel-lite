@@ -2,19 +2,36 @@ import asyncio
 
 from app.core.logging import logger, scheduler
 from app.core.state import ADMIN_CONFIG
+from app.jobs.domain_ip_sync import job_sync_domain_ips
 from app.jobs.geoip import job_check_geo_ip
 from app.jobs.monitor import job_monitor_status
 
 
+DOMAIN_IP_SYNC_INTERVAL_SECONDS = 60
+
+
 async def startup_sequence():
-    # 域名 IP 同步以前也在这里：每小时全量 + 启动时一次，是启动后那串刷屏
-    # Cloudflare 日志的来源。现在改成按需——只在打开单机详情页时同步那一台，
-    # 见 app/services/domain_sync.py。
     scheduler.add_job(job_monitor_status, 'interval', seconds=120, id='status_monitor', replace_existing=True, max_instances=1)
+    scheduler.add_job(
+        job_sync_domain_ips,
+        'interval',
+        seconds=DOMAIN_IP_SYNC_INTERVAL_SECONDS,
+        id='domain_ip_sync',
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
     scheduler.start()
     logger.info('🕒 APScheduler 定时任务已启动')
 
     asyncio.create_task(job_check_geo_ip())
+
+    async def init_domain_ip_sync():
+        # 启动后先等数据/UI 初始化稳定，再跑一次；之后由 APScheduler 每 1 分钟轮询。
+        await asyncio.sleep(30)
+        await job_sync_domain_ips()
+
+    asyncio.create_task(init_domain_ip_sync())
 
     async def init_alert_cache():
         await asyncio.sleep(5)
