@@ -15,6 +15,23 @@ from app.utils.network import is_ip_literal, resolve_domain_ip
 # 为了避免 100+ 台机器每轮都打 Cloudflare API，这里先做普通 DNS 预检查：
 # 域名解析结果和面板当前保存 IP 一致时，不调用 Cloudflare；只有不一致时才走 API。
 DOMAIN_IP_SYNC_CONCURRENCY = 3
+DOMAIN_IP_SYNC_BATCH_SIZE = 25
+_DOMAIN_IP_SYNC_CURSOR = 0
+
+
+def _pick_batch(targets):
+    """按服务器列表滚动取一批，避免每分钟集中查询全部域名。"""
+    global _DOMAIN_IP_SYNC_CURSOR
+
+    if not targets:
+        return []
+
+    total = len(targets)
+    batch_size = min(DOMAIN_IP_SYNC_BATCH_SIZE, total)
+    start = _DOMAIN_IP_SYNC_CURSOR % total
+    picked = [targets[(start + i) % total] for i in range(batch_size)]
+    _DOMAIN_IP_SYNC_CURSOR = (start + batch_size) % total
+    return picked
 
 
 def _current_server_ip(srv):
@@ -41,9 +58,10 @@ async def job_sync_domain_ips():
 
     Lite 版本原本删除了“每小时全量同步”，只在打开单机详情页时同步。
     这里恢复自动同步能力，但不恢复旧版高开销的“按当前 IP 反查域名”。
-    每轮采用两段式：
+    每轮只滚动检查一小批服务器，并采用两段式：
 
     - 只处理已经设置 `cf_primary_domain` 的服务器；
+    - 每分钟最多检查 `DOMAIN_IP_SYNC_BATCH_SIZE` 台，100+ 台会分几分钟错峰扫完；
     - 先用普通 DNS 解析主域名，和面板当前保存 IP 对比；
     - DNS 结果一致时直接跳过，不访问 Cloudflare API；
     - DNS 结果不一致/当前没有可比较 IP 时，才查询 Cloudflare A 记录并回写；
@@ -58,6 +76,10 @@ async def job_sync_domain_ips():
         if isinstance(s, dict) and str(s.get('cf_primary_domain') or '').strip()
     ]
     if not targets:
+        return
+
+    batch = _pick_batch(targets)
+    if not batch:
         return
 
     cf = CloudflareHandler()
@@ -93,11 +115,11 @@ async def job_sync_domain_ips():
                 logger.warning(f"⚠️ [域名IP定时同步] {srv.get('name', '--')} 跳过: {e}")
                 return False
 
-    results = await asyncio.gather(*(_sync_one(s) for s in targets))
+    results = await asyncio.gather(*(_sync_one(s) for s in batch))
     changed = any(results)
 
     if not changed:
-        logger.info(f"✅ [域名IP定时同步] 已检查 {len(targets)} 台，未发现 IP 变化")
+        logger.info(f"✅ [域名IP定时同步] 本轮已检查 {len(batch)}/{len(targets)} 台，未发现 IP 变化")
         return
 
     await save_servers()
@@ -115,4 +137,4 @@ async def job_sync_domain_ips():
     except Exception as e:
         logger.debug(f"[域名IP定时同步] 刷新侧边栏跳过: {e}")
 
-    logger.info(f"✅ [域名IP定时同步] 已同步 {sum(1 for x in results if x)} 台服务器的最新 IP")
+    logger.info(f"✅ [域名IP定时同步] 本轮检查 {len(batch)}/{len(targets)} 台，已同步 {sum(1 for x in results if x)} 台服务器的最新 IP")
