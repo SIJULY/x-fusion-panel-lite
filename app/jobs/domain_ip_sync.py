@@ -125,16 +125,4 @@ async def job_sync_domain_ips():
     await save_servers()
     await save_subs()
 
-    try:
-        from app.ui.components.dashboard import refresh_dashboard_ui
-        await refresh_dashboard_ui()
-    except Exception as e:
-        logger.debug(f"[域名IP定时同步] 刷新仪表盘跳过: {e}")
-
-    try:
-        from app.ui.components.sidebar import render_sidebar_content
-        render_sidebar_content.refresh()
-    except Exception as e:
-        logger.debug(f"[域名IP定时同步] 刷新侧边栏跳过: {e}")
-
     logger.info(f"✅ [域名IP定时同步] 本轮检查 {len(batch)}/{len(targets)} 台，已同步 {sum(1 for x in results if x)} 台服务器的最新 IP")
