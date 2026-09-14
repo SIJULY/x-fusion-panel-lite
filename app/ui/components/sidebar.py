@@ -155,7 +155,11 @@ async def on_server_click_handler(server):
     is_same_server = False
     if current_scope == 'SINGLE' and current_data:
         try:
-            if current_data.get('url') == server.get('url'):
+            from app.ui.pages.content_router import find_current_server
+
+            current_server = find_current_server(current_data)
+            clicked_server = find_current_server(server) or server
+            if current_server is clicked_server:
                 is_same_server = True
         except:
             pass

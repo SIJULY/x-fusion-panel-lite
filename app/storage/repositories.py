@@ -75,7 +75,12 @@ async def save_servers():
         logger.error(f"❌ 批量保存 servers 到关系型表失败: {e}")
 
 async def save_single_server(server_data):
-    """单独保存某一台服务器的更新，极大降低批量序列化开销"""
+    """单独保存某一台服务器的更新，极大降低批量序列化开销。
+
+    注意服务器的 `url` 是数据库主键。域名 IP 同步会把 `url` 从旧 IP 改成新 IP；
+    只 INSERT 新主键会让旧主键行残留，重启后同一台服务器可能变成两条记录。
+    因此这里仍只序列化当前这一台，但顺手按内存中的 URL 列表清理已不存在的旧行。
+    """
     if 'url' not in server_data:
         return
     try:
@@ -91,6 +96,10 @@ async def save_single_server(server_data):
                 "INSERT INTO servers (url, config) VALUES (?, ?) ON CONFLICT(url) DO UPDATE SET config=?",
                 (server_data['url'], val_str, val_str)
             )
+            current_urls = [s.get('url') for s in state.SERVERS_CACHE if isinstance(s, dict) and s.get('url')]
+            if current_urls:
+                placeholders = ','.join(['?'] * len(current_urls))
+                await db.execute(f"DELETE FROM servers WHERE url NOT IN ({placeholders})", current_urls)
             await db.commit()
     except Exception as e:
         logger.error(f"❌ 保存单个服务器 {server_data.get('url')} 到关系型表失败: {e}")

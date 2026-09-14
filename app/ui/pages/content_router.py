@@ -44,6 +44,56 @@ def _persist_last_view(scope, data, page_num=1):
         pass
 
 
+def find_current_server(data):
+    """从可能已经过期的单机页参数中，找回 SERVERS_CACHE 里的当前服务器对象。
+
+    域名 IP 后台同步会修改服务器的 `url` 主键。当前页面、浏览器 storage 或旧按钮闭包
+    里可能仍拿着旧 url / 旧 dict；如果只按 url 精确匹配，就会找不到服务器，或者继续
+    用旧对象渲染，表现为详情页顶部 IP 还是旧值。这里按稳定特征做兜底匹配。
+    """
+    try:
+        if isinstance(data, dict):
+            if data in SERVERS_CACHE:
+                return data
+
+            data_url = data.get('url')
+            if data_url:
+                matched = next((s for s in SERVERS_CACHE if s.get('url') == data_url), None)
+                if matched:
+                    return matched
+
+            data_name = str(data.get('name') or '').strip()
+            data_domain = str(data.get('cf_primary_domain') or '').strip()
+            if data_name and data_domain:
+                matched = next(
+                    (s for s in SERVERS_CACHE
+                     if str(s.get('name') or '').strip() == data_name
+                     and str(s.get('cf_primary_domain') or '').strip() == data_domain),
+                    None,
+                )
+                if matched:
+                    return matched
+
+            data_ssh_host = str(data.get('ssh_host') or '').strip()
+            if data_name and data_ssh_host:
+                matched = next(
+                    (s for s in SERVERS_CACHE
+                     if str(s.get('name') or '').strip() == data_name
+                     and str(s.get('ssh_host') or '').strip() == data_ssh_host),
+                    None,
+                )
+                if matched:
+                    return matched
+
+        elif isinstance(data, str) and data:
+            matched = next((s for s in SERVERS_CACHE if s.get('url') == data), None)
+            if matched:
+                return matched
+    except Exception as e:
+        logger.debug(f'[ContentRouter] find_current_server failed: {e}')
+    return None
+
+
 def get_targets_by_scope(scope, data):
     targets = []
     try:
@@ -62,14 +112,9 @@ def get_targets_by_scope(scope, data):
                 if real == data:
                     targets.append(s)
         elif scope in ['SINGLE', 'SSH_SINGLE']:
-            if data in SERVERS_CACHE:
-                targets = [data]
-            elif isinstance(data, dict):
-                data_url = data.get('url')
-                if data_url:
-                    matched = next((s for s in SERVERS_CACHE if s.get('url') == data_url), None)
-                    if matched:
-                        targets = [matched]
+            matched = find_current_server(data)
+            if matched:
+                targets = [matched]
     except:
         pass
     return targets

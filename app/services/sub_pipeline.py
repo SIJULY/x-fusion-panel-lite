@@ -378,13 +378,17 @@ def build_sub_links(resolved):
     links = []
     for item in resolved:
         node = _node_for_output(item)
-        raw = node.get('_raw_link')
-        if raw:
-            links.append(raw)
-            continue
         link = generate_node_link(node, item['host'])
         if link:
             links.append(link)
+            continue
+
+        # 独立节点没有 server/host，或 Snell/HY2 这类暂不支持从结构化字段重建分享链接的
+        # 自定义节点，仍保留原始链接。属于服务器的 VMess/VLESS/Trojan/SS 节点会在上面
+        # 用当前 server host 重新生成，避免 _raw_link 固化旧 IP 导致订阅继续下发旧地址。
+        raw = node.get('_raw_link')
+        if raw:
+            links.append(raw)
     return links
 
 

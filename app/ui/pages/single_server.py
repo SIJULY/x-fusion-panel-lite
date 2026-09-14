@@ -53,7 +53,7 @@ async def render_single_server_view(server_conf, force_refresh=False):
     # 防止侧边栏切换导致的 SSH 僵尸进程残留
     _server_dialog.cleanup_ssh_route_terminal()
 
-    from app.ui.pages.content_router import content_container, refresh_content
+    from app.ui.pages.content_router import content_container, find_current_server, refresh_content
 
     if content_container:
         content_container.clear()
@@ -227,6 +227,64 @@ async def render_single_server_view(server_conf, force_refresh=False):
                     return str(arch_value)
 
                 ssh_fallback_data = {}
+
+                current_client = ui.context.client
+                server_identity = {
+                    'url': server_conf.get('url'),
+                    'ssh_host': server_conf.get('ssh_host'),
+                    'cf_primary_domain': server_conf.get('cf_primary_domain'),
+                    'name': server_conf.get('name'),
+                }
+                server_ip_refreshing = {'running': False}
+                server_identity_timer = {'timer': None}
+
+                def _server_identity_changed(latest):
+                    if not isinstance(latest, dict):
+                        return False
+                    return any(
+                        latest.get(key) != server_identity.get(key)
+                        for key in ('url', 'ssh_host', 'cf_primary_domain', 'name')
+                    )
+
+                async def refresh_detail_if_server_identity_changed():
+                    """后台域名 IP 同步改了 url/ssh_host 后，自动刷新当前单机详情页。
+
+                    APScheduler 后台任务不能直接碰 NiceGUI UI；因此这里在详情页自身的
+                    UI timer 里做轻量检测。发现当前服务器的连接身份变化后，用当前
+                    client 重渲染本页，让顶部 IP、节点表、SSH/部署操作都切到新 IP。
+                    """
+                    if server_ip_refreshing.get('running'):
+                        return
+                    try:
+                        latest = find_current_server(server_conf) or server_conf
+                        if not _server_identity_changed(latest):
+                            return
+
+                        server_ip_refreshing['running'] = True
+                        try:
+                            timer = server_identity_timer.get('timer')
+                            if timer:
+                                timer.deactivate()
+                        except:
+                            pass
+                        logger.info(
+                            f"🔄 [单机详情刷新] {latest.get('name', server_conf.get('name', '--'))} "
+                            f"连接信息已更新，自动刷新详情页: "
+                            f"{server_identity.get('ssh_host') or server_identity.get('url')} -> "
+                            f"{latest.get('ssh_host') or latest.get('url')}"
+                        )
+                        await refresh_content('SINGLE', latest, force_refresh=True, manual_client=current_client)
+                    except Exception as e:
+                        logger.warning(f"⚠️ [单机详情刷新] 自动刷新失败: {e}")
+                    finally:
+                        server_ip_refreshing['running'] = False
+
+                # 当前详情页打开期间，后台域名 IP 同步可能随时把 url / ssh_host 换成新 IP。
+                # 这里每 5 秒只读内存对象，不做网络 IO；真正变更后才重渲染一次页面。
+                server_identity_timer['timer'] = ui.timer(
+                    5.0,
+                    lambda: asyncio.create_task(refresh_detail_if_server_identity_changed()),
+                )
 
                 async def _fetch_runtime_via_ssh():
                     if not server_conf.get('ssh_host'):

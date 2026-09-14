@@ -173,18 +173,10 @@ def draw_row(srv, node, css_style, compact_mode, is_first=True):
             settings_btn = ui.button(icon='settings', on_click=lambda _, s=srv, c=parent_client: asyncio.create_task(_refresh_single_server(s, c))).props('flat dense size=sm round').classes('text-slate-500').style('color: var(--xf-text-muted);')
             _apply_tooltip(settings_btn, '管理服务器', is_dark)
 
-
 async def _open_single_ssh(server, client=None):
-    from app.core.state import SERVERS_CACHE
-    from app.ui.pages.content_router import refresh_content
+    from app.ui.pages.content_router import find_current_server, refresh_content
 
-    target = server
-    try:
-        server_url = server.get('url') if isinstance(server, dict) else None
-        if server_url:
-            target = next((s for s in SERVERS_CACHE if s.get('url') == server_url), server)
-    except:
-        pass
+    target = find_current_server(server) or server
 
     if not isinstance(target, dict) or not target.get('ssh_host'):
         safe_notify('当前服务器未配置 SSH 主机，无法打开终端', 'warning')
@@ -194,15 +186,9 @@ async def _open_single_ssh(server, client=None):
 
 
 async def _refresh_single_server(server, client=None):
-    from app.core.state import SERVERS_CACHE
     from app.ui.pages.content_router import refresh_content
+    from app.ui.pages.content_router import find_current_server
 
-    target = server
-    try:
-        server_url = server.get('url') if isinstance(server, dict) else None
-        if server_url:
-            target = next((s for s in SERVERS_CACHE if s.get('url') == server_url), server)
-    except:
-        pass
+    target = find_current_server(server) or server
 
     await refresh_content('SINGLE', target, manual_client=client)
