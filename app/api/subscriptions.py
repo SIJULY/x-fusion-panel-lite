@@ -35,6 +35,7 @@ _UA_TARGETS = [
     ('clash', 'clash'),
     ('sing-box', 'singbox'),
     ('singbox', 'singbox'),
+    ('egern', 'surge'),
     ('surge', 'surge'),
     ('quantumult%20x', 'quanx'),
     ('quantumult x', 'quanx'),

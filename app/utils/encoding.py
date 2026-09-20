@@ -303,6 +303,183 @@ def generate_node_link(node, server_host):
     return ""
 
 
+
+def _surge_line_from_vmess_link(raw_link, remark, node):
+    """从 vmess:// 分享链接生成 Surge 配置行。"""
+    import json
+
+    try:
+        payload_b64 = raw_link[len('vmess://'):]
+        payload = json.loads(decode_base64_safe(payload_b64))
+        if not isinstance(payload, dict):
+            return ''
+
+        v_host = str(payload.get('add', '')).strip()
+        v_port = str(payload.get('port', '')).strip()
+        v_uuid = str(payload.get('id', '')).strip()
+        v_net = str(payload.get('net', 'tcp')).strip()
+        v_tls = str(payload.get('tls', '')).strip()
+        v_sni = str(payload.get('sni', '')).strip()
+        v_host_header = str(payload.get('host', '')).strip()
+        v_path = str(payload.get('path', '/')).strip()
+
+        if not v_host or not v_port or not v_uuid:
+            return ''
+
+        line = f"{remark} = vmess, {v_host}, {v_port}, username={v_uuid}, vmess-aead=true"
+
+        if v_net == 'ws':
+            line += f", ws=true, ws-path={v_path}"
+            if v_host_header:
+                line += f", ws-headers=Host:{v_host_header}"
+
+        if v_tls in ('tls',):
+            line += ", tls=true"
+            if v_sni:
+                line += f", sni={v_sni}"
+            line += ", skip-cert-verify=true"
+
+        line += ", tfo=true, udp-relay=true"
+        return _append_underlying_proxy(line, node)
+    except Exception as e:
+        return f"// Config Error (vmess link): {e}"
+
+
+def _surge_line_from_vless_link(raw_link, remark, node):
+    """从 vless:// 分享链接生成 Surge 配置行。Surge 5+ 支持 VLESS。"""
+    from urllib.parse import parse_qs, urlparse
+
+    try:
+        parsed = urlparse(raw_link)
+        v_uuid = parsed.username or ''
+        v_host = parsed.hostname or ''
+        v_port = str(parsed.port or '443')
+
+        params = parse_qs(parsed.query)
+        v_type = params.get('type', ['tcp'])[0]
+        v_security = params.get('security', ['none'])[0]
+        v_sni = params.get('sni', [''])[0]
+        v_host_header = params.get('host', [''])[0]
+        v_path = params.get('path', ['/'])[0]
+        v_flow = params.get('flow', [''])[0]
+        v_pbk = params.get('pbk', [''])[0]
+        v_sid = params.get('sid', [''])[0]
+
+        if not v_host or not v_uuid:
+            return ''
+
+        # Surge 不支持 XHTTP 传输
+        if v_type == 'xhttp':
+            return f"// Surge 暂未原生支持 XHTTP: {remark}"
+
+        line = f"{remark} = vless, {v_host}, {v_port}, username={v_uuid}"
+
+        if v_type == 'ws':
+            line += f", ws=true, ws-path={v_path}"
+            if v_host_header:
+                line += f", ws-headers=Host:{v_host_header}"
+        elif v_type == 'grpc':
+            svc = params.get('serviceName', [''])[0]
+            if svc:
+                line += f", grpc=true, grpc-service-name={svc}"
+
+        if v_security == 'tls':
+            line += ", tls=true"
+            if v_sni:
+                line += f", sni={v_sni}"
+            line += ", skip-cert-verify=true"
+        elif v_security == 'reality':
+            line += ", tls=true"
+            if v_sni:
+                line += f", sni={v_sni}"
+            if v_pbk:
+                line += f", reality-public-key={v_pbk}"
+            if v_sid:
+                line += f", reality-short-id={v_sid}"
+            line += ", skip-cert-verify=true"
+
+        if v_flow:
+            line += f", flow={v_flow}"
+
+        line += ", tfo=true, udp-relay=true"
+        return _append_underlying_proxy(line, node)
+    except Exception as e:
+        return f"// Config Error (vless link): {e}"
+
+
+def _surge_line_from_trojan_link(raw_link, remark, node):
+    """从 trojan:// 分享链接生成 Surge 配置行。"""
+    from urllib.parse import parse_qs, urlparse
+
+    try:
+        parsed = urlparse(raw_link)
+        t_password = parsed.username or ''
+        t_host = parsed.hostname or ''
+        t_port = str(parsed.port or '443')
+
+        params = parse_qs(parsed.query)
+        t_sni = params.get('sni', [''])[0]
+        t_type = params.get('type', ['tcp'])[0]
+        t_host_header = params.get('host', [''])[0]
+        t_path = params.get('path', ['/'])[0]
+
+        if not t_host or not t_password:
+            return ''
+
+        line = f"{remark} = trojan, {t_host}, {t_port}, password={t_password}"
+
+        if t_type == 'ws':
+            line += f", ws=true, ws-path={t_path}"
+            if t_host_header:
+                line += f", ws-headers=Host:{t_host_header}"
+
+        line += ", tls=true"
+        if t_sni:
+            line += f", sni={t_sni}"
+        line += ", skip-cert-verify=true"
+
+        line += ", tfo=true, udp-relay=true"
+        return _append_underlying_proxy(line, node)
+    except Exception as e:
+        return f"// Config Error (trojan link): {e}"
+
+
+def _surge_line_from_ss_link(raw_link, remark, node):
+    """从 ss:// 分享链接生成 Surge 配置行。"""
+    try:
+        link_body = raw_link[len('ss://'):]
+        if '#' in link_body:
+            link_body = link_body.split('#', 1)[0]
+
+        if '@' in link_body:
+            user_info_b64, server_part = link_body.rsplit('@', 1)
+            user_info = decode_base64_safe(user_info_b64)
+            if ':' not in user_info:
+                return ''
+            method, password = user_info.split(':', 1)
+            if ':' not in server_part:
+                return ''
+            ss_host, ss_port = server_part.rsplit(':', 1)
+        else:
+            decoded = decode_base64_safe(link_body)
+            if '@' not in decoded:
+                return ''
+            user_info, server_part = decoded.rsplit('@', 1)
+            if ':' not in user_info or ':' not in server_part:
+                return ''
+            method, password = user_info.split(':', 1)
+            ss_host, ss_port = server_part.rsplit(':', 1)
+
+        if not ss_host or not ss_port or not method or not password:
+            return ''
+
+        line = f"{remark} = ss, {ss_host}, {ss_port}, encrypt-method={method}, password={password}"
+        line += ", tfo=true, udp-relay=true"
+        return _append_underlying_proxy(line, node)
+    except Exception as e:
+        return f"// Config Error (ss link): {e}"
+
+
 def generate_detail_config(node, server_host):
     try:
         clean_host = _clean_server_host(server_host)
@@ -310,9 +487,12 @@ def generate_detail_config(node, server_host):
         address = node.get('listen') or clean_host
         port = node.get('port', '')
 
-        if node.get('_is_custom'):
-            raw_link = node.get('_raw_link', '')
+        # 自定义节点（_is_custom）和独立节点都带 _raw_link，统一从链接解析生成 Surge 行。
+        # 独立节点的数据结构只有 {id, remark, _raw_link, enable}，没有 _is_custom/protocol 等字段，
+        # 所以必须靠 _raw_link 判断而不是 _is_custom。
+        raw_link = node.get('_raw_link', '')
 
+        if raw_link:
             if raw_link.startswith('snell://'):
                 from urllib.parse import parse_qs, urlparse
 
@@ -362,22 +542,8 @@ def generate_detail_config(node, server_host):
 
                 line = f"{remark} = hysteria2, {h_host}, {h_port}, password={password}"
                 if str(port) and '-' in str(port) and str(port) == str(h_port):
-                     # Surge does not support `20000-50000` natively in the host,port position.
-                     # For Surge's port hopping syntax, it expects comma separated ports in the port field,
-                     # e.g., `host, 20000, 20001, 20002...` or it requires a different representation.
-                     # However, most Hysteria2 multiple port hopping simply uses `ports=20000-50000` 
-                     # but Surge parser for Hysteria2 doesn't recognize `ports=` either, it expects `port=20000-50000` 
-                     # or standard `host, port`. Let's use `host, port` for single port 
-                     # and `mport=20000-50000` or `ports=20000-50000` depending on what they actually support.
-                     # Based on community feedback, we will output comma-separated ports if possible,
-                     # or fallback to just stripping the range for Surge.
-                     # Update: Surge officially supports `host, 20000-50000`? No, if it didn't show up, it fails parsing.
-                     # Let's write `port=20000-50000` as a parameter and put a single port in the main slot.
                      first_port = str(h_port).split('-')[0]
                      last_port = str(h_port).split('-')[1]
-                     # Generate comma separated string if the range is small enough (Surge supports comma separation natively for ports sometimes)
-                     # But for Hysteria2, Surge uses `ports=...` or `mport=...` parameter? No parameter is well documented.
-                     # Actually, Surge's native Hysteria2 does not support port hopping out of the box in the `host, port` format yet without dropping the range.
                      line = f"{remark} = hysteria2, {h_host}, {first_port}, password={password}, port-hopping={h_port}"
 
                 if sni:
@@ -385,8 +551,17 @@ def generate_detail_config(node, server_host):
                 line += ", skip-cert-verify=true, download-bandwidth=1000, udp-relay=true"
                 return _append_underlying_proxy(line, node)
 
+            elif raw_link.startswith('vmess://'):
+                return _surge_line_from_vmess_link(raw_link, remark, node)
+
             elif raw_link.startswith('vless://'):
-                return f"// Surge 暂未原生支持 XHTTP: {remark}"
+                return _surge_line_from_vless_link(raw_link, remark, node)
+
+            elif raw_link.startswith('trojan://'):
+                return _surge_line_from_trojan_link(raw_link, remark, node)
+
+            elif raw_link.startswith('ss://'):
+                return _surge_line_from_ss_link(raw_link, remark, node)
 
         protocol = node.get('protocol')
         settings = _get_settings(node)
