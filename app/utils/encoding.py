@@ -1,5 +1,6 @@
 import base64
 import json
+import re
 from urllib.parse import quote
 
 from app.core.logging import logger
@@ -616,3 +617,375 @@ def generate_detail_config(node, server_host):
         return f"// Config Error: {str(e)}"
 
     return ""
+
+
+# ============================================================================
+# Egern 订阅格式（YAML）
+#
+# Egern 用的是 YAML：顶层 `proxies:`，每个节点是一个 `- <type>:` 映射，和 Surge 的
+# INI 行完全不同。所以这里**本地生成**（不走 subconverter），链路与 Surge 那套对齐：
+# generate_egern_proxy 对应 generate_detail_config，都是「优先解析 _raw_link，面板节点
+# 退回结构化字段」。区别只在产物——Surge 出字符串行，Egern 出 dict，最后由
+# egern_yaml_block 序列化成 YAML。
+#
+# 不引入 PyYAML（requirements.txt 里没有）：字符串标量能裸写就裸写，不安全的用
+# json.dumps 双引号——JSON 字符串本就是合法的 YAML 双引号标量，这也是 Sub-Store 的做法。
+# ============================================================================
+
+# 能安全裸写的 YAML 标量：只含字母数字和有限符号，且不撞 YAML 的保留字 / 纯数字
+# （纯数字若裸写会被解析成 int，而 name/short_id 这类必须保持字符串）。
+_EGERN_SAFE_SCALAR = re.compile(r'[A-Za-z0-9_.\-/@]+')
+_EGERN_NUMERIC = re.compile(r'-?\d+(\.\d+)?')
+_EGERN_YAML_RESERVED = {'true', 'false', 'yes', 'no', 'null', 'none', 'on', 'off', '~'}
+
+# Egern 的 Shadowsocks 加密名与分享链接里的 v2ray 写法有出入，需要映射。
+_EGERN_SS_METHOD_MAP = {
+    'chacha20-ietf-poly1305': 'chacha20-poly1305',
+    'xchacha20-ietf-poly1305': 'xchacha20-poly1305',
+}
+
+
+def _egern_int(v, default):
+    try:
+        return int(str(v).strip())
+    except (TypeError, ValueError):
+        return default
+
+
+def _egern_reality(q):
+    """从查询参数里抽出 reality 配置（public_key / short_id）。"""
+    r = {}
+    if q.get('pbk'):
+        r['public_key'] = q['pbk']
+    if q.get('sid'):
+        r['short_id'] = q['sid']
+    return r
+
+
+def _egern_scalar(value):
+    """把一个标量渲染成 YAML 值。"""
+    if isinstance(value, bool):
+        return 'true' if value else 'false'
+    if isinstance(value, (int, float)):
+        return str(value)
+    s = str(value)
+    if (_EGERN_SAFE_SCALAR.fullmatch(s)
+            and s.lower() not in _EGERN_YAML_RESERVED
+            and not _EGERN_NUMERIC.fullmatch(s)):
+        return s
+    # JSON 字符串是合法的 YAML 双引号标量，转义交给 json 处理
+    return json.dumps(s, ensure_ascii=False)
+
+
+def _egern_dump(obj, indent):
+    """把嵌套 dict 递归渲染成缩进式 YAML（块状），None 值跳过。"""
+    pad = '  ' * indent
+    lines = []
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if v is None:
+                continue
+            if isinstance(v, dict):
+                inner = {kk: vv for kk, vv in v.items() if vv is not None}
+                if not inner:
+                    continue
+                lines.append(f"{pad}{k}:")
+                lines.append(_egern_dump(inner, indent + 1))
+            elif isinstance(v, list):
+                if not v:
+                    continue
+                lines.append(f"{pad}{k}:")
+                for it in v:
+                    if isinstance(it, (dict, list)):
+                        lines.append(f"{pad}  - {json.dumps(it, ensure_ascii=False)}")
+                    else:
+                        lines.append(f"{pad}  - {_egern_scalar(it)}")
+            else:
+                lines.append(f"{pad}{k}: {_egern_scalar(v)}")
+    return '\n'.join(lines)
+
+
+def egern_yaml_block(proxy):
+    """把 {'<type>': {...}} 渲染成 proxies 列表里的一项（含 '  - ' 前缀，末尾换行）。"""
+    block = _egern_dump(proxy, 2)  # indent=2 → 顶层键前有 4 个空格
+    if not block:
+        return ''
+    parts = block.split('\n')
+    first = parts[0][4:]  # 去掉那 4 个空格，换成 '  - '
+    out = f"  - {first}"
+    if len(parts) > 1:
+        out += '\n' + '\n'.join(parts[1:])
+    return out + '\n'
+
+
+def _egern_from_vless_link(raw_link, remark):
+    from urllib.parse import parse_qs, unquote, urlparse
+
+    parsed = urlparse(raw_link)
+    uuid = parsed.username or ''
+    host = parsed.hostname or ''
+    if not host or not uuid:
+        return None
+    port = parsed.port or 443
+    q = {k: v[0] for k, v in parse_qs(parsed.query).items()}
+    name = remark or (unquote(parsed.fragment) if parsed.fragment else 'Unnamed')
+    net = q.get('type', 'tcp')
+    security = q.get('security', 'none')
+    sni = q.get('sni') or q.get('host') or ''
+    ws_host = q.get('host', '')
+    path = q.get('path', '')  # parse_qs 已 url-decode
+    flow = q.get('flow', '')
+    tls = security in ('tls', 'reality')
+    reality = security == 'reality'
+
+    node = {'name': name, 'server': host, 'port': port, 'user_id': uuid, 'udp_relay': True}
+    transport = None
+    if net == 'ws':
+        key = 'wss' if tls else 'ws'
+        t = {'path': path or '/'}
+        if ws_host:
+            t['headers'] = {'Host': ws_host}
+        if tls:
+            if sni:
+                t['sni'] = sni
+            t['skip_tls_verify'] = True
+        transport = {key: t}
+    elif net == 'grpc':
+        t = {'service_name': q.get('serviceName', '')}
+        if sni:
+            t['sni'] = sni
+        if reality:
+            r = _egern_reality(q)
+            if r:
+                t['reality'] = r
+        if tls:
+            t['skip_tls_verify'] = True
+        transport = {'grpc': t}
+    else:  # tcp（及其它），只有带 tls/reality 才有意义
+        if tls:
+            t = {}
+            if sni:
+                t['sni'] = sni
+            t['skip_tls_verify'] = True
+            if reality:
+                r = _egern_reality(q)
+                if r:
+                    t['reality'] = r
+            transport = {'tls': t}
+            # flow 只对 vless 顶层、且只认 xtls-rprx-vision
+            if flow == 'xtls-rprx-vision':
+                node['flow'] = flow
+    if transport:
+        node['transport'] = transport
+    return {'vless': node}
+
+
+def _egern_from_vmess_link(raw_link, remark):
+    payload = json.loads(decode_base64_safe(raw_link[len('vmess://'):]))
+    if not isinstance(payload, dict):
+        return None
+    host = str(payload.get('add', '')).strip()
+    uuid = str(payload.get('id', '')).strip()
+    if not host or not uuid:
+        return None
+    port = _egern_int(payload.get('port'), 443)
+    net = str(payload.get('net', 'tcp')).strip()
+    tls = str(payload.get('tls', '')).strip() in ('tls', 'reality')
+    sni = str(payload.get('sni', '')).strip()
+    ws_host = str(payload.get('host', '')).strip()
+    path = str(payload.get('path', '/')).strip()
+    scy = str(payload.get('scy', 'auto')).strip() or 'auto'
+    aid = _egern_int(payload.get('aid'), 0)
+    name = remark or str(payload.get('ps', '')).strip() or 'Unnamed'
+
+    node = {'name': name, 'server': host, 'port': port, 'user_id': uuid,
+            'security': scy, 'udp_relay': True}
+    if aid != 0:
+        node['legacy'] = True  # 非 0 alterId 走旧版 VMess
+
+    transport = None
+    if net == 'ws':
+        key = 'wss' if tls else 'ws'
+        t = {'path': path or '/'}
+        if ws_host:
+            t['headers'] = {'Host': ws_host}
+        if tls:
+            if sni:
+                t['sni'] = sni
+            t['skip_tls_verify'] = True
+        transport = {key: t}
+    elif net == 'grpc':
+        t = {'service_name': path}  # vmess grpc 的 serviceName 落在 path 字段
+        if sni:
+            t['sni'] = sni
+        if tls:
+            t['skip_tls_verify'] = True
+        transport = {'grpc': t}
+    else:  # tcp
+        if tls:
+            t = {}
+            if sni:
+                t['sni'] = sni
+            t['skip_tls_verify'] = True
+            transport = {'tls': t}
+    if transport:
+        node['transport'] = transport
+    return {'vmess': node}
+
+
+def _egern_from_trojan_link(raw_link, remark):
+    from urllib.parse import parse_qs, unquote, urlparse
+
+    parsed = urlparse(raw_link)
+    password = parsed.username or ''
+    host = parsed.hostname or ''
+    if not host or not password:
+        return None
+    port = parsed.port or 443
+    q = {k: v[0] for k, v in parse_qs(parsed.query).items()}
+    name = remark or (unquote(parsed.fragment) if parsed.fragment else 'Unnamed')
+    sni = q.get('sni') or q.get('peer') or host
+    net = q.get('type', 'tcp')
+    ws_host = q.get('host', '')
+    path = q.get('path', '/')
+
+    # Trojan 恒为 TLS；skip_tls_verify 与面板 Surge 生成保持一致（恒 true）
+    node = {'name': name, 'server': host, 'port': port, 'password': password,
+            'udp_relay': True, 'sni': sni, 'skip_tls_verify': True}
+    if net == 'ws':
+        # Egern 的 trojan-over-ws 用顶层 websocket，不是 transport
+        ws = {'path': path or '/'}
+        if ws_host:
+            ws['host'] = ws_host
+        node['websocket'] = ws
+    if q.get('security') == 'reality':
+        r = _egern_reality(q)
+        if r:
+            node['reality'] = r
+    return {'trojan': node}
+
+
+def _egern_from_ss_link(raw_link, remark):
+    from urllib.parse import unquote
+
+    body = raw_link[len('ss://'):]
+    frag_name = ''
+    if '#' in body:
+        body, frag = body.split('#', 1)
+        frag_name = unquote(frag)
+    if '?' in body:
+        body = body.split('?', 1)[0]
+
+    if '@' in body:
+        cred_b64, server_part = body.rsplit('@', 1)
+        cred = decode_base64_safe(cred_b64)
+    else:
+        decoded = decode_base64_safe(body)
+        if '@' not in decoded:
+            return None
+        cred, server_part = decoded.rsplit('@', 1)
+    if ':' not in cred or ':' not in server_part:
+        return None
+    method, password = cred.split(':', 1)
+    host, port = server_part.rsplit(':', 1)
+    if not host or not port:
+        return None
+
+    name = remark or frag_name or 'Unnamed'
+    method = _EGERN_SS_METHOD_MAP.get(method, method)
+    node = {'name': name, 'method': method, 'server': host,
+            'port': _egern_int(port, 0), 'password': password, 'udp_relay': True}
+    return {'shadowsocks': node}
+
+
+def _egern_from_hy2_link(raw_link, remark):
+    from urllib.parse import parse_qs, unquote
+
+    # 不用 urlparse：端口可能是 20000-50000 这种段，urlparse 取 .port 会抛错
+    body = raw_link.split('://', 1)[1] if '://' in raw_link else raw_link
+    frag_name = ''
+    if '#' in body:
+        body, frag = body.split('#', 1)
+        frag_name = unquote(frag)
+    query = ''
+    if '?' in body:
+        body, query = body.split('?', 1)
+    if '@' not in body:
+        return None
+    password, hostport = body.split('@', 1)
+    if ':' in hostport:
+        host, port_raw = hostport.rsplit(':', 1)
+    else:
+        host, port_raw = hostport, '443'
+    if not host or not password:
+        return None
+
+    q = {k: v[0] for k, v in parse_qs(query).items()}
+    name = remark or frag_name or 'Unnamed'
+    sni = q.get('sni') or q.get('peer') or ''
+
+    node = {'name': name, 'server': host}
+    if '-' in port_raw:
+        node['port'] = _egern_int(port_raw.split('-')[0], 443)
+        node['port_hopping'] = port_raw
+    else:
+        node['port'] = _egern_int(port_raw, 443)
+    node['auth'] = password
+    node['udp_relay'] = True
+    if sni:
+        node['sni'] = sni
+    node['skip_tls_verify'] = True
+    if q.get('obfs') == 'salamander' and q.get('obfs-password'):
+        node['obfs'] = 'salamander'
+        node['obfs_password'] = q.get('obfs-password')
+    return {'hysteria2': node}
+
+
+def _egern_from_snell_link(raw_link, remark):
+    from urllib.parse import parse_qs, unquote, urlparse
+
+    parsed = urlparse(raw_link)
+    psk = parsed.username or ''
+    host = parsed.hostname or ''
+    if not host or not psk:
+        return None
+    port = parsed.port or 0
+    q = {k: v[0] for k, v in parse_qs(parsed.query).items()}
+    name = remark or (unquote(parsed.fragment) if parsed.fragment else 'Unnamed')
+    version = _egern_int(q.get('version', '4'), 4)
+    node = {'name': name, 'server': host, 'port': port, 'psk': psk,
+            'version': version, 'udp_relay': True}
+    return {'snell': node}
+
+
+def generate_egern_proxy(node, server_host):
+    """把一个节点转成 Egern proxy 字典 {'<type>': {...}}；转不了返回 None。
+
+    与 generate_detail_config（Surge）同构：独立节点 / 自定义节点带 _raw_link，直接从
+    链接解析；面板节点没有 _raw_link，先用 generate_node_link 拼出分享链接再走同一套
+    解析器——这样就不用再为「结构化字段 → Egern」单独写一遍映射。
+    """
+    try:
+        remark = str(node.get('remark') or '').strip() or 'Unnamed'
+        raw_link = str(node.get('_raw_link') or '').strip()
+        if not raw_link:
+            raw_link = generate_node_link(node, server_host) or ''
+        if not raw_link:
+            return None
+
+        if raw_link.startswith('vless://'):
+            return _egern_from_vless_link(raw_link, remark)
+        if raw_link.startswith('vmess://'):
+            return _egern_from_vmess_link(raw_link, remark)
+        if raw_link.startswith('trojan://'):
+            return _egern_from_trojan_link(raw_link, remark)
+        if raw_link.startswith('ss://'):
+            return _egern_from_ss_link(raw_link, remark)
+        if raw_link.startswith('hy2://') or raw_link.startswith('hysteria2://'):
+            return _egern_from_hy2_link(raw_link, remark)
+        if raw_link.startswith('snell://'):
+            return _egern_from_snell_link(raw_link, remark)
+        return None
+    except Exception as e:
+        logger.warning(f"⚠️ [Egern] 生成节点失败 ({node.get('remark', '?')}): {e}")
+        return None

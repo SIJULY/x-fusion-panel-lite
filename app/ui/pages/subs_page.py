@@ -38,7 +38,7 @@ from app.ui.common.notifications import safe_copy_to_clipboard, safe_notify, sho
 
 # 格式菜单的排列顺序。SUB_TARGETS 是 dict，直接遍历顺序不好控制，而这里的顺序
 # 决定用户第一眼看到哪几个，所以固定下来：常用的排前面。
-TARGET_ORDER = ['clash', 'singbox', 'surge', 'quanx', 'loon', 'v2ray', 'clashr', 'ss']
+TARGET_ORDER = ['clash', 'singbox', 'surge', 'egern', 'quanx', 'loon', 'v2ray', 'clashr', 'ss']
 
 # 直接摆在订阅链接右侧的常用格式：(target, 图标, 色板名)。
 # 这四个覆盖绝大多数客户端，天天要复制的东西不该每次先展开一层菜单。

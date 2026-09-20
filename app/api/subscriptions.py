@@ -12,6 +12,7 @@ from fastapi.responses import Response
 from app.core.logging import logger
 from app.core.state import ADMIN_CONFIG, SUBS_CACHE
 from app.services.sub_pipeline import (
+    build_egern_config,
     build_node_lookup,
     build_sub_links,
     build_surge_lines,
@@ -35,7 +36,7 @@ _UA_TARGETS = [
     ('clash', 'clash'),
     ('sing-box', 'singbox'),
     ('singbox', 'singbox'),
-    ('egern', 'surge'),
+    ('egern', 'egern'),
     ('surge', 'surge'),
     ('quantumult%20x', 'quanx'),
     ('quantumult x', 'quanx'),
@@ -49,6 +50,7 @@ SUB_TARGETS = {
     'clashr': 'ClashR',
     'singbox': 'sing-box',
     'surge': 'Surge',
+    'egern': 'Egern',
     'quanx': 'Quantumult X',
     'loon': 'Loon',
     # Shadowrocket 吃的就是 base64，subconverter 里没有单独的 shadowrocket target，
@@ -176,6 +178,13 @@ async def sub_handler(token: str, request: Request = None):
             return _plain("\n".join(lines), userinfo)
         return _plain(b64, userinfo)
 
+    if target == 'egern':
+        egern_conf = build_egern_config(resolved)
+        if egern_conf:
+            return _plain(egern_conf, userinfo)
+        # 与 surge 一致：本地生成不出内容就回落 base64，绝不返回错误页
+        return _plain(b64, userinfo)
+
     internal_api = f"{_base_url(request)}/sub/{token}?target=v2ray"
     content, error = await _call_converter(
         _converter_params(target, internal_api, sub.get('options', {}) or {})
@@ -251,6 +260,12 @@ async def short_group_handler(target: str, group_b64: str, request: Request):
                 return _plain(f"// Group [{group_name}] is empty")
             return _plain("\n".join(lines), userinfo)
 
+        if target == 'egern':
+            egern_conf = build_egern_config(resolved)
+            if not egern_conf:
+                return _plain(f"# Group [{group_name}] is empty")
+            return _plain(egern_conf, userinfo)
+
         internal_api = f"{_base_url(request)}/sub/group/{group_b64}"
         content, error = await _call_converter(_converter_params(target, internal_api, {}))
         if error:
@@ -297,6 +312,9 @@ async def short_sub_handler(target: str, token: str, request: Request):
 
         if target == 'surge':
             return _plain("\n".join(build_surge_lines(resolved, lookup)), userinfo)
+
+        if target == 'egern':
+            return _plain(build_egern_config(resolved), userinfo)
 
         # 让 subconverter 明确抓 base64 原文，避免它自己的 UA 触发上面的自适应逻辑
         internal_api = f"{_base_url(request)}/sub/{token}?target=v2ray"

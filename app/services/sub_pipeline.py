@@ -413,6 +413,30 @@ def build_surge_lines(resolved, lookup=None):
     return lines
 
 
+def build_egern_config(resolved):
+    """生成 Egern 配置（YAML 文本）。
+
+    与 build_surge_lines 同构：逐个节点取「按最终名字产出的副本」，转成 Egern proxy
+    字典，再序列化成 `proxies:` + 列表。没有可用节点时返回空串，调用方据此决定回落
+    base64 还是给出空提示。
+
+    不处理 underlying_proxy——那是 Surge 专有的前置代理链，Egern 暂不支持，所以这里
+    也不需要 lookup 参数。
+    """
+    from app.utils.encoding import egern_yaml_block, generate_egern_proxy
+
+    blocks = []
+    for item in resolved:
+        node = _node_for_output(item)
+        proxy = generate_egern_proxy(node, item['host'])
+        if proxy:
+            blocks.append(egern_yaml_block(proxy))
+
+    if not blocks:
+        return ""
+    return "proxies:\n" + "".join(blocks)
+
+
 def _prepare_underlying_proxy(node, lookup):
     """把 underlying_proxy 的 key 翻成 Surge 认的节点名。"""
     proxy_key = node.get('underlying_proxy')
